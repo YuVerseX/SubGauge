@@ -32,6 +32,7 @@ if ($noticeManifest.version -ne $manifest.version -or $noticeManifest.target -ne
 foreach ($inputCheck in @(
     @{Path='package.json';Expected=$noticeManifest.inputs.packageJsonSha256},
     @{Path='package-lock.json';Expected=$noticeManifest.inputs.packageLockSha256},
+    @{Path='src-tauri\Cargo.toml';Expected=$noticeManifest.inputs.cargoManifestSha256},
     @{Path='src-tauri\Cargo.lock';Expected=$noticeManifest.inputs.cargoLockSha256},
     @{Path='licenses\overrides.json';Expected=$noticeManifest.inputs.overridesSha256},
     @{Path='scripts\generate-notices.cjs';Expected=$noticeManifest.inputs.generatorSha256}
