@@ -116,6 +116,124 @@ fn cleanup(engine: &Engine) {
     }
 }
 
+fn preference_analysis_fixture() -> AnalysisResult {
+    AnalysisResult {
+        account_id: "preferences-fixture".into(),
+        generation: 0,
+        range: UsageRange::Today,
+        start: "2026-10-01T00:00:00Z".into(),
+        end: "2026-10-02T00:00:00Z".into(),
+        timezone: "Asia/Shanghai".into(),
+        trend: vec![],
+        models: vec![],
+        keys: vec![],
+        complete: true,
+        message: None,
+        synced_at: "2026-10-02T00:00:00Z".into(),
+    }
+}
+
+#[tokio::test]
+async fn save_preferences_rejects_runtime_replaced_while_waiting_for_analysis() {
+    let e = engine();
+    let mut a = account("https://fixture.example".into(), "preferences-fixture");
+    a.preferences.alias = "Original fixture".into();
+    let old = seed(&e, a.clone(), session(false));
+    *old.last_summary.lock().unwrap() = 101;
+    *old.last_recent.lock().unwrap() = 102;
+    let mut old_cache = old.analysis.lock().await;
+    *old_cache = Some(("old fixture".into(), 103, preference_analysis_fixture()));
+    let expected_old_cache = serde_json::to_value(&*old_cache).unwrap();
+    let mut preferences = a.preferences.clone();
+    preferences.alias = "Requested change".into();
+    preferences.default_range = UsageRange::Month;
+    let mut saving = std::pin::pin!(e.save_preferences(a.id.clone(), preferences));
+    // Poll exactly to the held analysis lock, without scheduler timing assumptions.
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(saving.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    let new = Arc::new(Runtime::new(Some(session(false)), UsageRange::Today));
+    *new.last_summary.lock().unwrap() = 201;
+    *new.last_recent.lock().unwrap() = 202;
+    *new.analysis.lock().await = Some(("new fixture".into(), 203, preference_analysis_fixture()));
+    let expected_new_cache = serde_json::to_value(&*new.analysis.lock().await).unwrap();
+    let snapshot = e.demo_snapshot(&a, UsageRange::Today, 11).unwrap();
+    let expected_config = {
+        let mut state = e.state.lock().unwrap();
+        state.runtime.insert(a.id.clone(), new.clone());
+        state.config.accounts[0].snapshot = Some(snapshot);
+        state.generation = 11;
+        serde_json::to_value(&state.config).unwrap()
+    };
+    e.persist().unwrap();
+    let expected_disk = std::fs::read(&e.path).unwrap();
+    drop(old_cache);
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), saving)
+        .await
+        .expect("saving must finish after the analysis lock is released");
+    let state = e.bootstrap().await;
+    let current_config = serde_json::to_value(&e.state.lock().unwrap().config).unwrap();
+    let current_disk = std::fs::read(&e.path).unwrap();
+    let old_cache = serde_json::to_value(&*old.analysis.lock().await).unwrap();
+    let new_cache = serde_json::to_value(&*new.analysis.lock().await).unwrap();
+    cleanup(&e);
+    let error = outcome.expect_err("a replaced runtime must reject the stale save");
+    assert!(error.contains("会话已变更") && error.contains("重试"));
+    assert_eq!(current_config, expected_config);
+    assert_eq!(current_disk, expected_disk);
+    assert_eq!(state.generation, 11);
+    assert_eq!(state.selected_range, UsageRange::Today);
+    assert_eq!(state.accounts[0].preferences, a.preferences);
+    assert_eq!(old_cache, expected_old_cache);
+    assert_eq!(new_cache, expected_new_cache);
+    assert_eq!(*old.range.lock().unwrap(), UsageRange::Today);
+    assert_eq!(*old.last_summary.lock().unwrap(), 101);
+    assert_eq!(*old.last_recent.lock().unwrap(), 102);
+    assert_eq!(*new.range.lock().unwrap(), UsageRange::Today);
+    assert_eq!(*new.last_summary.lock().unwrap(), 201);
+    assert_eq!(*new.last_recent.lock().unwrap(), 202);
+}
+
+#[tokio::test]
+async fn save_preferences_updates_current_runtime_and_persists_after_restart() {
+    let e = engine();
+    let mut a = account("https://fixture.example".into(), "preferences-fixture");
+    a.preferences.alias = "Original fixture".into();
+    let rt = seed(&e, a.clone(), session(false));
+    *rt.last_summary.lock().unwrap() = 101;
+    *rt.last_recent.lock().unwrap() = 102;
+    *rt.analysis.lock().await = Some(("fixture".into(), 103, preference_analysis_fixture()));
+    e.state.lock().unwrap().config.accounts[0].snapshot =
+        Some(e.demo_snapshot(&a, UsageRange::Today, 0).unwrap());
+    let preferences = AccountPreferences {
+        alias: "Saved fixture".into(),
+        default_range: UsageRange::Month,
+        metrics: vec!["balance".into(), "cost".into()],
+        recent_minutes: 15,
+        timezone: "UTC".into(),
+    };
+    let state = e
+        .save_preferences(a.id.clone(), preferences.clone())
+        .await
+        .unwrap();
+    assert_eq!(state.generation, 1);
+    assert_eq!(state.selected_range, preferences.default_range);
+    assert_eq!(state.accounts[0].preferences, preferences);
+    assert!(state.snapshot.is_none());
+    assert!(rt.analysis.lock().await.is_none());
+    assert_eq!(*rt.last_summary.lock().unwrap(), 0);
+    assert_eq!(*rt.last_recent.lock().unwrap(), 0);
+    let restarted = Engine::new(e.path.parent().unwrap().to_owned()).unwrap();
+    let state = restarted.bootstrap().await;
+    assert_eq!(state.current_account_id, Some(a.id));
+    assert_eq!(state.selected_range, preferences.default_range);
+    assert_eq!(state.accounts[0].preferences, preferences);
+    assert!(state.snapshot.is_none());
+    cleanup(&e);
+}
+
 #[cfg(windows)]
 #[tokio::test]
 async fn legacy_settings_and_theme_changes_preserve_account_configuration() {

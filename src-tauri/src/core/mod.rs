@@ -399,22 +399,32 @@ impl Engine {
             return Err("请输入账号名称。".into());
         }
         let (_, rt) = self.context(&id)?;
-        *rt.range.lock().unwrap() = preferences.default_range;
-        *rt.last_summary.lock().unwrap() = 0;
-        *rt.last_recent.lock().unwrap() = 0;
-        *rt.analysis.lock().await = None;
+        // Relogin can replace this runtime while an analysis request holds its lock.
+        let mut analysis = rt.analysis.lock().await;
         {
             let mut s = self.state.lock().unwrap();
+            if !s
+                .runtime
+                .get(&id)
+                .is_some_and(|live| Arc::ptr_eq(live, &rt))
+            {
+                return Err("账号会话已变更，请重试保存显示设置。".into());
+            }
             let a = s
                 .config
                 .accounts
                 .iter_mut()
                 .find(|a| a.summary.id == id)
                 .ok_or("账号不存在")?;
+            *rt.range.lock().unwrap() = preferences.default_range;
+            *rt.last_summary.lock().unwrap() = 0;
+            *rt.last_recent.lock().unwrap() = 0;
+            *analysis = None;
             a.summary.preferences = preferences;
             a.snapshot = None;
             s.generation += 1;
         }
+        drop(analysis);
         self.persist()?;
         Ok(self.bootstrap().await)
     }

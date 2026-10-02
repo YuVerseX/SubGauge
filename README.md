@@ -38,7 +38,7 @@ npm run desktop
 ```
 
 ```powershell
-# 类型、布局、Rust 格式、严格 Clippy 与业务回归
+# 类型、布局与详情、Rust 格式、严格 Clippy 与业务回归
 npm run verify
 # 先构建安装包，再生成免安装 ZIP 和 SHA256
 npm run package

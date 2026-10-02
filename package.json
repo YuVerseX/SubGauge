@@ -1,6 +1,6 @@
 {
   "name": "subgauge",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Windows desktop gauge for personal Sub2API usage",
   "license": "MIT",
   "private": true,
@@ -9,6 +9,7 @@
     "dev": "vite --host 127.0.0.1",
     "typecheck": "vue-tsc --noEmit",
     "test:layout": "node scripts/float-layout-probe.cjs",
+    "test:details": "node scripts/detail-regression.cjs",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
@@ -17,7 +18,7 @@
     "test:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 test",
     "fmt:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 fmt",
     "lint:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 lint",
-    "verify": "npm run build && npm run test:layout && npm run fmt:rust && npm run lint:rust && npm run test:rust",
+    "verify": "npm run build && npm run test:layout && npm run test:details && npm run fmt:rust && npm run lint:rust && npm run test:rust",
     "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 build",
     "package:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1"
   },

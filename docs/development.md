@@ -19,7 +19,7 @@ Rust 最低声明依据锁定依赖的 MSRV；本机实测版本为 1.99.0，不
 | `src-tauri/capabilities/` | 本地浮窗和详情权限 |
 | `src-tauri/icons/` | 配置引用的 Windows 图标 |
 | `app-icon.svg` | 图标原始矢量资源 |
-| `scripts/` | 桌面命令、免安装打包、资源观察 |
+| `scripts/` | 桌面命令、布局与详情回归、免安装打包、资源观察 |
 | `.github/workflows/windows.yml` | 自动检查、构建及上传构建产物，不自动公开发布 |
 | `docs/` | 产品、接入、架构、使用、验收与发布说明；截图只使用示例数据 |
 | `node_modules/`、`dist/`、`src-tauri/target/`、`src-tauri/gen/` | 依赖与生成输出，Git 忽略 |
@@ -52,6 +52,7 @@ npm run verify
 npm run typecheck
 npm run build
 npm run test:layout
+npm run test:details
 npm run check:rust
 npm run fmt:rust
 npm run lint:rust
@@ -62,7 +63,9 @@ npm run test:rust
 
 `test:layout` 使用锁定的 Playwright、无头 Microsoft Edge 和 Tauri 官方 IPC 模拟运行实际 Vue 页面，只使用示例数据，不操作桌面鼠标。它检查卡片测量、展开/收起、动态内容、菜单与较矮工作区；不能替代 Windows 原生 DPI 验收。脚本自动启动并关闭临时 Vite 服务，报告和截图位于忽略目录 `release/validation/`。本机须已安装 Edge，也可用 `SUBGAUGE_BROWSER_CHANNEL=chromium` 选择已安装的 Playwright Chromium。
 
-CI 运行相同检查入口，并生成、上传安装包、ZIP 与 SHA256 文件。工作流指定 Windows Server 2022、Node.js 24.20.0 和 Rust 1.99.0，显式安装锁定 Playwright 所需 Chromium；本机布局默认使用 Edge。失败时也尝试保存示例布局报告与截图。runner 镜像仍可能更新；工作流尚未远端执行，不能将本机通过等同于 CI 通过，也不能视为 Windows 10/11 桌面兼容验收。
+`test:details` 使用相同浏览器环境，检查筛选和分页后返回概览、查询失败、迟到响应，以及保存账号偏好后的成功提示与普通切页清理。请求延迟由测试显式释放，不依赖网络或固定等待时间；使用隔离示例数据并自动关闭浏览器和临时服务，报告位于 `release/validation/detail-regression.json`。
+
+CI 运行相同检查入口，并生成、上传安装包、ZIP 与 SHA256 文件。工作流指定 Windows Server 2022、Node.js 24.20.0 和 Rust 1.99.0，显式安装锁定 Playwright 所需 Chromium；本机浏览器回归默认使用 Edge。失败时也尝试保存示例浏览器报告与布局截图。runner 镜像仍可能更新；工作流尚未远端执行，不能将本机通过等同于 CI 通过，也不能视为 Windows 10/11 桌面兼容验收。
 
 不为静态文案添加永久测试；关键业务规则或公共接口变更应保留有回归价值的测试。临时探针完成后清理。不要提交真实凭据、完整私有响应、用户配置、登录缓存或本机观察 CSV。
 

@@ -30,7 +30,11 @@ jobs:
         env:
           SUBGAUGE_BROWSER_CHANNEL: chromium
         run: npm run test:layout
-      - name: Upload sample layout diagnostics
+      - name: Detail navigation regression (headless Chromium)
+        env:
+          SUBGAUGE_BROWSER_CHANNEL: chromium
+        run: npm run test:details
+      - name: Upload sample browser diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -39,6 +43,7 @@ jobs:
             release/validation/float-layout-browser.json
             release/validation/float-layout-*.png
             release/validation/theme-*.png
+            release/validation/detail-regression.json
           if-no-files-found: warn
       - name: Check Rust formatting
         run: npm run fmt:rust

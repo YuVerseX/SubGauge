@@ -42,6 +42,11 @@ let unlisten: (() => void)[] = [], observer: ResizeObserver | undefined, request
 function accept(value: Bootstrap) { if (!data.value || value.generation >= data.value.generation) data.value = value }
 function message(e: unknown) { return typeof e === 'string' ? e : e instanceof Error ? e.message : '操作未完成，请重试。' }
 async function run(action: () => Promise<void>) { error.value = ''; busy.value = true; try { await action() } catch (e) { error.value = message(e) } finally { busy.value = false } }
+async function navigateWithNotice(target: Page, text: string) {
+  page.value = target
+  await nextTick()
+  if (page.value === target) notice.value = text
+}
 async function selectAccount(id: string) { picker.value = false; await run(async () => accept(await api.switchAccount(id))) }
 async function enableDemo() { await run(async () => accept(await api.enableDemo())) }
 async function changeRange(e: Event) { const value = (e.target as HTMLSelectElement).value as UsageRange; if (account.value) await run(async () => accept(await api.refresh(account.value!.id, value))) }
@@ -64,9 +69,9 @@ function clearLogin(a?: AccountSummary) { form.siteUrl = a?.siteUrl || ''; form.
 async function reconnect(a: AccountSummary) { await open('login', a) }
 function editPreferences(a: AccountSummary | null) { if (!a) return; prefId.value = a.id; prefAlias.value = a.alias; Object.assign(pref, { ...a.preferences, metrics: [...a.preferences.metrics] }); fieldOrder.value = [...a.preferences.metrics, ...(['cost', 'requests', 'tokens', 'cache', 'balance'] as Metric[]).filter(k => !a.preferences.metrics.includes(k))] }
 function moveField(index: number, offset: number) { const next = [...fieldOrder.value]; [next[index], next[index + offset]] = [next[index + offset]!, next[index]!]; fieldOrder.value = next }
-async function savePreferences() { await run(async () => { if (!prefAlias.value.trim()) throw new Error('请输入账号名称。'); if (!pref.metrics.length) throw new Error('请至少选择一个常驻指标。'); new Intl.DateTimeFormat('zh-CN', { timeZone: pref.timezone }); accept(await api.savePreferences(prefId.value, { ...pref, metrics: fieldOrder.value.filter(f => pref.metrics.includes(f)) }, prefAlias.value.trim())); notice.value = '账号显示设置已保存'; page.value = 'accounts' }) }
+async function savePreferences() { await run(async () => { if (!prefAlias.value.trim()) throw new Error('请输入账号名称。'); if (!pref.metrics.length) throw new Error('请至少选择一个常驻指标。'); new Intl.DateTimeFormat('zh-CN', { timeZone: pref.timezone }); accept(await api.savePreferences(prefId.value, { ...pref, metrics: fieldOrder.value.filter(f => pref.metrics.includes(f)) }, prefAlias.value.trim())); await navigateWithNotice('accounts', '账号显示设置已保存') }) }
 async function saveSettings() { await run(async () => { accept(await api.saveSettings({ ...settings })); notice.value = '应用设置已保存' }) }
-async function login() { await run(async () => { if (isDemo) throw new Error('当前是示例预览，请在 SubGauge 桌面应用中输入真实账号。'); try { const result = challenge.value ? await api.twoFactor(challenge.value, form.code) : await api.login({ ...form }); if (result.status === 'twoFactor') { challenge.value = result.challengeId || ''; return } if (result.state) accept(result.state); challenge.value = ''; page.value = 'overview'; notice.value = '账号已连接'; await loadDetail() } finally { form.password = ''; form.code = '' } }) }
+async function login() { await run(async () => { if (isDemo) throw new Error('当前是示例预览，请在 SubGauge 桌面应用中输入真实账号。'); try { const result = challenge.value ? await api.twoFactor(challenge.value, form.code) : await api.login({ ...form }); if (result.status === 'twoFactor') { challenge.value = result.challengeId || ''; return } if (result.state) accept(result.state); challenge.value = ''; await navigateWithNotice('overview', '账号已连接'); await loadDetail() } finally { form.password = ''; form.code = '' } }) }
 async function remove(a: AccountSummary) { await run(async () => { accept(await api.removeAccount(a.id)); confirmRemove.value = null; notice.value = '已移除本机保存的账号' }) }
 async function logout(a: AccountSummary) { await run(async () => { accept(await api.logout(a.id)); notice.value = '该账号已退出登录' }) }
 async function loadDetail(force = false) {
@@ -76,7 +81,7 @@ async function loadDetail(force = false) {
   loadingKey = key
   const id = ++requestId, a = account.value.id, r = range.value, tab = page.value
   detailLoading.value = true; detailError.value = ''
-  if (tab === 'records') recordData.value = null
+  if (tab !== 'analysis') recordData.value = null
   try {
     const jobs: Promise<void>[] = []
     if (tab !== 'analysis') jobs.push(api.records({ accountId: a, range: r, page: tab === 'overview' ? 1 : recordPage.value, pageSize: tab === 'overview' ? 5 : 20, model: tab === 'records' ? appliedModel.value : undefined, keyId: tab === 'records' ? appliedKey.value : undefined }).then(v => { if (id === requestId && account.value?.id === v.accountId) recordData.value = v }))
