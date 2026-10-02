@@ -1,0 +1,60 @@
+name: Windows validation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.20.0'
+          cache: npm
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Install Rust tooling
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.99.0
+      - name: Install regression browser
+        run: npm exec playwright -- install chromium
+      - name: Check frontend
+        run: npm run build
+      - name: Floating layout regression (headless Chromium)
+        env:
+          SUBGAUGE_BROWSER_CHANNEL: chromium
+        run: npm run test:layout
+      - name: Upload sample layout diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SubGauge-layout-diagnostics
+          path: |
+            release/validation/float-layout-browser.json
+            release/validation/float-layout-*.png
+            release/validation/theme-*.png
+          if-no-files-found: warn
+      - name: Check Rust formatting
+        run: npm run fmt:rust
+      - name: Check Rust lints
+        run: npm run lint:rust
+      - name: Rust regression tests
+        run: npm run test:rust
+      - name: Build installer
+        run: npm run package
+      - name: Build portable ZIP
+        run: npm run package:portable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SubGauge-windows-x64
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            release/*.zip
+            release/*.sha256
+          if-no-files-found: error

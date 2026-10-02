@@ -1,0 +1,15 @@
+name: 功能建议
+description: 描述使用场景与希望改善的体验。
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景与问题
+      description: 目前怎样使用，哪一步需要改善？请避免账号和站点隐私。
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 建议行为
+      description: 希望如何操作或展示？

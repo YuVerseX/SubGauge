@@ -1,0 +1,239 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum UsageRange {
+    #[default]
+    Today,
+    Week,
+    Month,
+    Recent,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AccountPreferences {
+    pub alias: String,
+    pub default_range: UsageRange,
+    pub metrics: Vec<String>,
+    pub recent_minutes: u32,
+    pub timezone: String,
+}
+impl Default for AccountPreferences {
+    fn default() -> Self {
+        Self {
+            alias: String::new(),
+            default_range: UsageRange::Today,
+            metrics: vec![
+                "cost".into(),
+                "requests".into(),
+                "tokens".into(),
+                "cache".into(),
+            ],
+            recent_minutes: 5,
+            timezone: "Asia/Shanghai".into(),
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AppearanceTheme {
+    #[default]
+    Light,
+    Dark,
+    System,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AppSettings {
+    pub theme: AppearanceTheme,
+    pub opacity: f64,
+    pub always_on_top: bool,
+    pub recent_refresh_seconds: u64,
+    pub summary_refresh_seconds: u64,
+    pub background_refresh_seconds: u64,
+}
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            theme: AppearanceTheme::Light,
+            opacity: 1.0,
+            always_on_top: true,
+            recent_refresh_seconds: 10,
+            summary_refresh_seconds: 30,
+            background_refresh_seconds: 120,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountSummary {
+    pub id: String,
+    pub site: String,
+    pub email: String,
+    pub role: String,
+    pub user_id: i64,
+    pub preferences: AccountPreferences,
+    pub needs_login: bool,
+    pub demo: bool,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Totals {
+    pub cost: String,
+    pub requests: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub total_tokens: u64,
+    pub cache_rate: Option<f64>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageRecord {
+    pub id: i64,
+    pub created_at: String,
+    pub model: String,
+    pub api_key_id: i64,
+    pub api_key_name: String,
+    pub totals: Totals,
+    pub duration_ms: Option<f64>,
+    pub stream: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatus {
+    pub state: String,
+    pub message: Option<String>,
+    pub usage_synced_at: Option<String>,
+    pub balance_synced_at: Option<String>,
+    pub recent_synced_at: Option<String>,
+    pub complete: bool,
+}
+impl Default for SyncStatus {
+    fn default() -> Self {
+        Self {
+            state: "loading".into(),
+            message: None,
+            usage_synced_at: None,
+            balance_synced_at: None,
+            recent_synced_at: None,
+            complete: false,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSnapshot {
+    pub account_id: String,
+    pub generation: u64,
+    pub range: UsageRange,
+    pub start: String,
+    pub end: String,
+    pub timezone: String,
+    pub totals: Option<Totals>,
+    pub balance: Option<String>,
+    pub recent: Option<Totals>,
+    pub latest: Option<UsageRecord>,
+    pub sync: SyncStatus,
+    pub demo: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Bootstrap {
+    pub accounts: Vec<AccountSummary>,
+    pub current_account_id: Option<String>,
+    pub selected_range: UsageRange,
+    pub settings: AppSettings,
+    pub snapshot: Option<UsageSnapshot>,
+    pub generation: u64,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginInput {
+    pub site: String,
+    pub email: String,
+    pub password: String,
+    #[serde(default)]
+    pub alias: String,
+    #[serde(default)]
+    pub remember: bool,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginOutcome {
+    pub status: String,
+    pub challenge_id: Option<String>,
+    pub masked_email: Option<String>,
+    pub state: Option<Bootstrap>,
+}
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordQuery {
+    pub account_id: String,
+    pub range: UsageRange,
+    #[serde(default = "one")]
+    pub page: u32,
+    #[serde(default = "page_size")]
+    pub page_size: u32,
+    pub api_key_id: Option<i64>,
+    pub model: Option<String>,
+}
+fn one() -> u32 {
+    1
+}
+fn page_size() -> u32 {
+    20
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordPage {
+    pub account_id: String,
+    pub generation: u64,
+    pub range: UsageRange,
+    pub start: String,
+    pub end: String,
+    pub timezone: String,
+    pub items: Vec<UsageRecord>,
+    pub total: u64,
+    pub page: u32,
+    pub page_size: u32,
+    pub complete: bool,
+    pub message: Option<String>,
+}
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisQuery {
+    pub account_id: String,
+    pub range: UsageRange,
+    pub api_key_id: Option<i64>,
+    pub model: Option<String>,
+    #[serde(default)]
+    pub include_keys: bool,
+    #[serde(default)]
+    pub force: bool,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisRow {
+    pub name: String,
+    pub totals: Totals,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisResult {
+    pub account_id: String,
+    pub generation: u64,
+    pub range: UsageRange,
+    pub start: String,
+    pub end: String,
+    pub timezone: String,
+    pub trend: Vec<AnalysisRow>,
+    pub models: Vec<AnalysisRow>,
+    pub keys: Vec<AnalysisRow>,
+    pub complete: bool,
+    pub message: Option<String>,
+    pub synced_at: String,
+}

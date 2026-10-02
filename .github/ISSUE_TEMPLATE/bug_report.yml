@@ -1,0 +1,26 @@
+name: 问题报告
+description: 报告可复现的问题，请先移除账号与站点隐私。
+body:
+  - type: markdown
+    attributes:
+      value: |
+        不要上传密码、验证码、令牌、Cookie、用户配置或完整私有响应。截图请隐藏邮箱、私有站点和业务数据。敏感安全问题请先阅读 SECURITY.md。
+  - type: input
+    id: environment
+    attributes:
+      label: 版本与环境
+      description: SubGauge 版本、Windows 版本、实际缩放比例、安装版或免安装版。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 操作步骤、预期行为与实际结果。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏后的补充信息
+      description: 可选截图或错误文字；不要提供真实登录信息。

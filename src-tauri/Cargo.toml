@@ -1,0 +1,36 @@
+[package]
+name = "subgauge"
+version = "0.1.5"
+description = "Sub2API personal usage desktop gauge"
+license = "MIT"
+edition = "2021"
+rust-version = "1.90"
+
+[lib]
+name = "subgauge_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["sync", "time", "rt-multi-thread", "macros", "net", "io-util"] }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+url = "2"
+rust_decimal = { version = "1", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_Memory", "Win32_Storage_FileSystem", "Win32_UI_Input_KeyboardAndMouse"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

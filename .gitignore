@@ -1,0 +1,17 @@
+node_modules/
+dist/
+release/
+src-tauri/target/
+src-tauri/gen/
+.env*
+*.log
+.DS_Store
+
+# Personal runtime data must never become repository fixtures.
+accounts.v1.json
+accounts.v1.json.*
+window.json
+window.json.*
+*.pfx
+*.p12
+*.key

@@ -1,0 +1,37 @@
+{
+  "name": "subgauge",
+  "version": "0.1.5",
+  "description": "Windows desktop gauge for personal Sub2API usage",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "vue-tsc --noEmit",
+    "test:layout": "node scripts/float-layout-probe.cjs",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "tauri": "tauri",
+    "desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 dev",
+    "check:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 check",
+    "test:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 test",
+    "fmt:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 fmt",
+    "lint:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 lint",
+    "verify": "npm run build && npm run test:layout && npm run fmt:rust && npm run lint:rust && npm run test:rust",
+    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 build",
+    "package:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.1",
+    "@lucide/vue": "1.49.0",
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.1",
+    "@vitejs/plugin-vue": "6.0.9",
+    "playwright": "1.62.1",
+    "typescript": "6.0.3",
+    "vite": "8.3.2",
+    "vue-tsc": "3.3.11"
+  }
+}
