@@ -1,4 +1,15 @@
 $ErrorActionPreference = 'Stop'
+function Get-DistributionFileHash([string]$FilePath) {
+    $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
+    $stream = $null
+    try {
+        $stream = [System.IO.File]::OpenRead($FilePath)
+        return [BitConverter]::ToString($hashAlgorithm.ComputeHash($stream)).Replace('-','').ToLowerInvariant()
+    } finally {
+        if ($stream) { $stream.Dispose() }
+        $hashAlgorithm.Dispose()
+    }
+}
 $repo = Split-Path $PSScriptRoot -Parent
 $manifest = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'package.json') | ConvertFrom-Json
 $tauriManifest = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'src-tauri\tauri.conf.json') | ConvertFrom-Json
@@ -37,14 +48,14 @@ foreach ($inputCheck in @(
     @{Path='licenses\overrides.json';Expected=$noticeManifest.inputs.overridesSha256},
     @{Path='scripts\generate-notices.cjs';Expected=$noticeManifest.inputs.generatorSha256}
 )) {
-    if ((Get-FileHash -LiteralPath (Join-Path $repo $inputCheck.Path) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $inputCheck.Expected) {
+    if ((Get-DistributionFileHash (Join-Path $repo $inputCheck.Path)) -ne $inputCheck.Expected) {
         throw 'Distribution notice inputs changed. Rebuild before packaging.'
     }
 }
 $notice = Join-Path $legal 'THIRD-PARTY-NOTICES.txt'
 $standardLibrary = Join-Path $legal 'RUST-STANDARD-LIBRARY-NOTICES.html'
-if ((Get-FileHash -LiteralPath $notice -Algorithm SHA256).Hash.ToLowerInvariant() -ne $noticeManifest.noticeSha256 -or
-    (Get-FileHash -LiteralPath $standardLibrary -Algorithm SHA256).Hash.ToLowerInvariant() -ne $noticeManifest.standardLibrarySha256) {
+if ((Get-DistributionFileHash $notice) -ne $noticeManifest.noticeSha256 -or
+    (Get-DistributionFileHash $standardLibrary) -ne $noticeManifest.standardLibrarySha256) {
     throw 'Distribution declaration checksum mismatch.'
 }
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination (Join-Path $stage 'LICENSE')
@@ -54,14 +65,7 @@ Copy-Item -LiteralPath $standardLibrary -Destination (Join-Path $stage 'RUST-STA
 Compress-Archive -LiteralPath @((Join-Path $stage 'SubGauge.exe'),$guide,(Join-Path $stage 'LICENSE'),(Join-Path $stage 'THIRD-PARTY-NOTICES.txt'),(Join-Path $stage 'RUST-STANDARD-LIBRARY-NOTICES.html')) -DestinationPath "$stage.zip" -Force
 Copy-Item -LiteralPath $installer -Destination $release
 foreach ($artifact in @("$stage.zip",(Join-Path $release ([System.IO.Path]::GetFileName($installer))))) {
-    $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
-    $stream = [System.IO.File]::OpenRead($artifact)
-    try {
-        $hash = [BitConverter]::ToString($hashAlgorithm.ComputeHash($stream)).Replace('-','').ToLowerInvariant()
-        [System.IO.File]::WriteAllText("$artifact.sha256", "$hash  $([System.IO.Path]::GetFileName($artifact))`n")
-        [pscustomobject]@{ Algorithm='SHA256'; Hash=$hash; Path=$artifact }
-    } finally {
-        $stream.Dispose()
-        $hashAlgorithm.Dispose()
-    }
+    $hash = Get-DistributionFileHash $artifact
+    [System.IO.File]::WriteAllText("$artifact.sha256", "$hash  $([System.IO.Path]::GetFileName($artifact))`n")
+    [pscustomobject]@{ Algorithm='SHA256'; Hash=$hash; Path=$artifact }
 }
