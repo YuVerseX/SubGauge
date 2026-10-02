@@ -24,8 +24,33 @@ New-Item -ItemType Directory -Force -Path $stage | Out-Null
 Copy-Item -LiteralPath $binary -Destination (Join-Path $stage 'SubGauge.exe')
 $guide = Join-Path $stage 'README.md'
 Copy-Item -LiteralPath (Join-Path $repo 'docs\user-guide.md') -Destination $guide
+$legal = Join-Path $release 'legal'
+$noticeManifest = Get-Content -Raw -Encoding UTF8 (Join-Path $legal 'notice-manifest.json') | ConvertFrom-Json
+if ($noticeManifest.version -ne $manifest.version -or $noticeManifest.target -ne 'x86_64-pc-windows-msvc') {
+    throw 'Generate matching Windows distribution notices before packaging.'
+}
+foreach ($inputCheck in @(
+    @{Path='package.json';Expected=$noticeManifest.inputs.packageJsonSha256},
+    @{Path='package-lock.json';Expected=$noticeManifest.inputs.packageLockSha256},
+    @{Path='src-tauri\Cargo.lock';Expected=$noticeManifest.inputs.cargoLockSha256},
+    @{Path='licenses\overrides.json';Expected=$noticeManifest.inputs.overridesSha256},
+    @{Path='scripts\generate-notices.cjs';Expected=$noticeManifest.inputs.generatorSha256}
+)) {
+    if ((Get-FileHash -LiteralPath (Join-Path $repo $inputCheck.Path) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $inputCheck.Expected) {
+        throw 'Distribution notice inputs changed. Rebuild before packaging.'
+    }
+}
+$notice = Join-Path $legal 'THIRD-PARTY-NOTICES.txt'
+$standardLibrary = Join-Path $legal 'RUST-STANDARD-LIBRARY-NOTICES.html'
+if ((Get-FileHash -LiteralPath $notice -Algorithm SHA256).Hash.ToLowerInvariant() -ne $noticeManifest.noticeSha256 -or
+    (Get-FileHash -LiteralPath $standardLibrary -Algorithm SHA256).Hash.ToLowerInvariant() -ne $noticeManifest.standardLibrarySha256) {
+    throw 'Distribution declaration checksum mismatch.'
+}
+Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination (Join-Path $stage 'LICENSE')
+Copy-Item -LiteralPath $notice -Destination (Join-Path $stage 'THIRD-PARTY-NOTICES.txt')
+Copy-Item -LiteralPath $standardLibrary -Destination (Join-Path $stage 'RUST-STANDARD-LIBRARY-NOTICES.html')
 # Explicit files avoid carrying stale staging files into a new release.
-Compress-Archive -LiteralPath @((Join-Path $stage 'SubGauge.exe'),$guide) -DestinationPath "$stage.zip" -Force
+Compress-Archive -LiteralPath @((Join-Path $stage 'SubGauge.exe'),$guide,(Join-Path $stage 'LICENSE'),(Join-Path $stage 'THIRD-PARTY-NOTICES.txt'),(Join-Path $stage 'RUST-STANDARD-LIBRARY-NOTICES.html')) -DestinationPath "$stage.zip" -Force
 Copy-Item -LiteralPath $installer -Destination $release
 foreach ($artifact in @("$stage.zip",(Join-Path $release ([System.IO.Path]::GetFileName($installer))))) {
     $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()

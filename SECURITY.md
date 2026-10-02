@@ -6,7 +6,7 @@ DPAPI 不阻止以同一 Windows 用户身份运行的其他程序访问数据�
 
 ## 报告安全问题
 
-公开仓库启用 GitHub 的 Private vulnerability reporting 后，请从仓库的 Security 页面私下报告。尚未启用时，先通过维护者提供的私密渠道联系；不要在公开 Issue 中粘贴凭据、私有响应或可利用细节。本项目目前没有另行公布的安全联系邮箱，也没有服务等级承诺。
+公开仓库已启用 GitHub Private vulnerability reporting，请使用 [私密漏洞报告](https://github.com/YuVerseX/SubGauge/security/advisories/new)。不要在公开 Issue 中粘贴凭据、私有响应或可利用细节。本项目目前没有另行公布的安全联系邮箱，也没有服务等级承诺。
 
 报告可包含受影响版本、匿名复现步骤、影响范围和建议修复；使用测试账号。不要提交 `%LOCALAPPDATA%\app.subgauge.desktop` 下的数据文件，包括加密会话。
 

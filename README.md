@@ -1,5 +1,7 @@
 # SubGauge
 
+[![Windows CI](https://github.com/YuVerseX/SubGauge/actions/workflows/windows.yml/badge.svg)](https://github.com/YuVerseX/SubGauge/actions/workflows/windows.yml)
+
 Windows 桌面 Sub2API 个人用量悬浮窗。平时只显示关心的数字，需要时原地展开，或打开详细用量。
 
 通过站点地址、邮箱和密码登录，支持多站点、多账号；普通用户和管理员都查看自己账号下全部 Key 的合计，不要求 API Key。
@@ -24,7 +26,7 @@ Windows 桌面 Sub2API 个人用量悬浮窗。平时只显示关心的数字，
 
 提供 Windows x64 安装版和免安装 ZIP。安装版运行 `SubGauge_<version>_x64-setup.exe`；免安装版解压后运行 `SubGauge.exe`。两者共享当前 Windows 用户的账号与设置。操作、登录及升级说明见 [使用指南](docs/user-guide.md)。
 
-运行需要 WebView2 Runtime。安装版缺少运行时时会联网下载，免安装版需自行准备。当前分发未签名；公开下载尚未发布，可从源码构建。
+运行需要 WebView2 Runtime。安装版缺少运行时时会联网下载，免安装版需自行准备。当前分发未签名；公开安装包尚未发布，源码可直接获取。软件版本和下载附件将放在 [GitHub Releases](https://github.com/YuVerseX/SubGauge/releases)。
 
 当前源码和本地构建版本为 **0.1.6**，变更与分发信息见 [候选发布说明](docs/releases/0.1.6.md)。已完成的桌面验收基线为 **0.1.5 / Windows 10 x64 / 150% 显示缩放**；0.1.6 已通过自动回归和打包检查，尚未重做安装升级与原生桌面验收。Windows 11、其他实际系统 DPI、多屏、启用验证码或 TOTP 的真实部署及长期内存稳定性尚未全部验证。
 

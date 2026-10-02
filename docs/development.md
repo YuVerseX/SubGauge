@@ -20,6 +20,7 @@ Rust 最低声明依据锁定依赖的 MSRV；本机实测版本为 1.99.0，不
 | `src-tauri/icons/` | 配置引用的 Windows 图标 |
 | `app-icon.svg` | 图标原始矢量资源 |
 | `scripts/` | 桌面命令、布局与详情回归、免安装打包、资源观察 |
+| `licenses/` | 缺失许可证的固定来源补充、Microsoft Loader 声明与校验索引 |
 | `.github/workflows/windows.yml` | 自动检查、构建及上传构建产物，不自动公开发布 |
 | `docs/` | 产品、接入、架构、使用、验收与发布说明；截图只使用示例数据 |
 | `node_modules/`、`dist/`、`src-tauri/target/`、`src-tauri/gen/` | 依赖与生成输出，Git 忽略 |
@@ -53,6 +54,7 @@ npm run typecheck
 npm run build
 npm run test:layout
 npm run test:details
+npm run notices
 npm run check:rust
 npm run fmt:rust
 npm run lint:rust
@@ -65,7 +67,9 @@ npm run test:rust
 
 `test:details` 使用相同浏览器环境，检查筛选和分页后返回概览、查询失败、迟到响应，以及保存账号偏好后的成功提示与普通切页清理。请求延迟由测试显式释放，不依赖网络或固定等待时间；使用隔离示例数据并自动关闭浏览器和临时服务，报告位于 `release/validation/detail-regression.json`。
 
-CI 运行相同检查入口，并生成、上传安装包、ZIP 与 SHA256 文件。工作流指定 Windows Server 2022、Node.js 24.20.0 和 Rust 1.99.0，显式安装锁定 Playwright 所需 Chromium；本机浏览器回归默认使用 Edge。失败时也尝试保存示例浏览器报告与布局截图。runner 镜像仍可能更新；工作流尚未远端执行，不能将本机通过等同于 CI 通过，也不能视为 Windows 10/11 桌面兼容验收。
+`notices` 从当前锁定的 Windows 依赖树和本地包文件生成分发声明，固定补充来源和预编译 Loader 按 SHA256 核对，并复制当前 Rust 工具链的标准库声明。输出位于 `release/legal/`；缺失、来源变化或校验失败时停止，不替换成空声明。首次运行可能下载锁定的 Cargo 包，不额外安装全局工具。生成器需要官方 Rust 工具链的 `COPYRIGHT-library.html`，该文件随本次验证的 rustc 组件提供。
+
+CI 运行相同检查入口，并生成、上传安装包、ZIP 与 SHA256 文件。工作流指定 Windows Server 2022、Node.js 24.20.0 和 Rust 1.99.0，显式安装锁定 Playwright 所需 Chromium；本机浏览器回归默认使用 Edge。失败时也尝试保存示例浏览器报告与布局截图。远端已通过的提交和新增分发检查结果见 [验证记录](validation.md)；runner 镜像仍可能更新，CI 不替代 Windows 10/11 桌面兼容验收。
 
 不为静态文案添加永久测试；关键业务规则或公共接口变更应保留有回归价值的测试。临时探针完成后清理。不要提交真实凭据、完整私有响应、用户配置、登录缓存或本机观察 CSV。
 
@@ -78,7 +82,7 @@ npm run package
 npm run package:portable
 ```
 
-`package:portable` 不执行编译，须先成功构建当前源码。它核对 npm、Cargo、Tauri 版本，以及 Release EXE 和安装器内部的 `ProductVersion`；ZIP 只收录 `SubGauge.exe` 和使用说明 `README.md`，不收录 staging 目录残留文件、用户配置或验证数据。
+`package` 在前端构建后自动生成分发声明；安装器包含使用说明及三份法律声明。`package:portable` 不执行编译，须先成功构建当前源码。它核对 npm、Cargo、Tauri 版本，以及 Release EXE 和安装器内部的 `ProductVersion`，并核对声明内容与输入 Hash。ZIP 显式收录 `SubGauge.exe`、`README.md`、`LICENSE`、`THIRD-PARTY-NOTICES.txt` 和 `RUST-STANDARD-LIBRARY-NOTICES.html`，不收录 staging 残留文件、用户配置或验证数据。
 
 | 产物 | 位置 |
 | --- | --- |

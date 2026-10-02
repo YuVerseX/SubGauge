@@ -26,6 +26,8 @@ jobs:
         run: npm exec playwright -- install chromium
       - name: Check frontend
         run: npm run build
+      - name: Prepare distribution notices
+        run: npm run notices
       - name: Floating layout regression (headless Chromium)
         env:
           SUBGAUGE_BROWSER_CHANNEL: chromium

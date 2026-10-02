@@ -2,3 +2,6 @@
 
 *.png -text
 *.ico -text
+
+# Keep upstream spacing in third-party declaration texts.
+licenses/*.txt whitespace=-blank-at-eol
