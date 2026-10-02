@@ -21,4 +21,4 @@ npm run verify
 
 涉及凭据或跨账号数据暴露的问题，按 [安全说明](SECURITY.md) 处理，避免公开敏感复现材料。
 
-贡献采用本项目的 [MIT 许可证](LICENSE)。发布流程见 [发布准备](docs/releasing.md)。
+贡献采用本项目的 [MIT 许可证](LICENSE)。发布流程见 [发布流程](docs/releasing.md)。

@@ -97,7 +97,7 @@ Tauri 打包会修改 EXE 的 bundle 标识，安装目录 EXE 与打包前 EXE 
 
 现有分发为未签名 Windows x64 当前用户安装。两种版本使用相同 `app.subgauge.desktop` 标识、配置目录与单实例机制，升级保留配置。免安装不意味着会话能跨 Windows 用户或跨电脑迁移。
 
-生成构建文件不代表已经完成安装、跨系统或桌面验收。发布前以 [validation.md](validation.md) 核对适用版本、测试范围和未执行项，并按 [发布准备](releasing.md) 检查公开源码及完整历史。
+生成构建文件不代表已经完成安装、跨系统或桌面验收。发布前以 [validation.md](validation.md) 核对适用版本、测试范围和未执行项，并按 [发布流程](releasing.md) 检查公开源码及完整历史。
 
 ## 用户数据与安全边界
 

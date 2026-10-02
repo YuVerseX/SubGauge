@@ -25,7 +25,7 @@
 | `SubGauge_0.1.6_x64-setup.exe` | 2,771,511 | `7fbeab9c47525687d32c0bc9ab057a3b4a6a7da5e399d55fd25acb6f34a1d827` |
 | `SubGauge-0.1.6-windows-x64.zip` | 3,658,826 | `6a2c30d0a9c7345cae3f609ad55fe6e84f0a3dd47256bb54bd70e844fc6c35fc` |
 
-GitHub `v0.1.6` pre-release 草稿固定指向上述候选提交，四个附件已上传；再次下载后，四个文件的 Hash、服务器 digest 和尺寸均与本地一致，发布说明也已核对。草稿仍未公开发布。
+GitHub [v0.1.6 预览版](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.6) 于 2026-10-02 公开发布，固定指向上述候选提交。四个附件已上传；再次下载后，四个文件的 Hash、服务器 digest 和尺寸均与本地一致，发布说明也已核对。
 
 产物和详细检查报告位于 Git 忽略的 `release/`，没有加入源码提交。这些检查不代表 0.1.6 安装升级或原生运行已验收。
 

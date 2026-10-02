@@ -1,12 +1,12 @@
-# 发布准备
+# 发布流程
 
 源码检查、GitHub 仓库建立和二进制公开发布是不同步骤。本项目的 CI 检查和构建产物上传不自动创建公开 Release。
 
 公开仓库为 [YuVerseX/SubGauge](https://github.com/YuVerseX/SubGauge)，`main` 已推送，MIT、About 描述、topics 和私密漏洞报告已设置。首次及发布候选提交的远端 CI 均已通过，证据见验证记录。
 
-`v0.1.6` 的 pre-release 草稿已创建，固定指向 `e9897615223e0066648499c8c980582ab9748030`。四个附件已上传并下载回查，内容、服务器 digest、尺寸、说明和目标提交一致；尚未公开发布。维护者登录后可在仓库 Releases 查看草稿，后续纯文档提交不移动这个候选版本。
+[`v0.1.6` 预览版](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.6) 已于 2026-10-02 公开发布，固定指向 `e9897615223e0066648499c8c980582ab9748030`。四个附件已上传并下载回查，内容、服务器 digest、尺寸、说明和目标提交一致；后续纯文档提交不移动这个版本。
 
-0.1.6 的产品说明、变更、附件名称和验证范围已整理为 [候选发布说明](releases/0.1.6.md)。本地构建产物保留在 Git 忽略的 `release/`，公开二进制前按下文核对对应验收和第三方声明。
+0.1.6 的产品说明、变更、附件名称和验证范围见 [发布说明](releases/0.1.6.md)。本地构建产物保留在 Git 忽略的 `release/`，后续版本公开二进制前按下文核对对应验收和第三方声明。
 
 ## 源码维护
 
@@ -35,14 +35,14 @@
 
 发布说明列出版本变化、运行依赖、签名状态、已验证系统及重要未测试项，并附安装版、免安装 ZIP 和 SHA256。实际推送、打 Tag 或创建公开 Release 前确认目标仓库和可见性；准备工作不会自动执行这些动作。
 
-## 0.1.6 软件发布方式
+## 软件发布方式
 
 软件使用 GitHub Releases 分发，源码留在 `main`。首次软件版本标记为 pre-release，上传四个明确附件：安装包、免安装 ZIP，以及各自的 `.sha256`。两种包都应包含使用说明与三份法律声明，GitHub 自动生成的 Source code ZIP 不等于可直接运行的软件。
 
 先对完成本地构建的准确提交创建草稿，核对附件名称、下载后 Hash、Release 目标提交和实际 CI 结果，再公开发布。不要通过推送到 `main` 自动发布，也不要把之后变动的分支头误作为已有二进制的来源。
 
 ```powershell
-# 首次创建示例；当前 v0.1.6 草稿已经存在，不要重复执行
+# 首次创建示例；v0.1.6 已发布，不要重复执行或覆盖既有附件
 # 构建、核对并推送源码后，固定对应候选版本的提交
 $releaseCommit = git rev-parse HEAD
 gh release create v0.1.6 --repo YuVerseX/SubGauge --target $releaseCommit --draft --prerelease --latest=false --title 'SubGauge 0.1.6 · Windows x64 预览版' --notes-file docs/releases/0.1.6.md release/SubGauge_0.1.6_x64-setup.exe release/SubGauge-0.1.6-windows-x64.zip release/SubGauge_0.1.6_x64-setup.exe.sha256 release/SubGauge-0.1.6-windows-x64.zip.sha256
@@ -51,7 +51,7 @@ gh release view v0.1.6 --repo YuVerseX/SubGauge
 
 已有同名草稿时先读取并核对，不重复创建或默认覆盖附件。完成最终确认后才取消 draft；首次发布保留 pre-release 标记，不默认设为稳定版 Latest。公开发布后更新 README 的下载状态和版本说明。
 
-确认公开当前候选包后，可在 Releases 的草稿编辑页选择 Publish release，或执行下列命令；这一步会让附件对所有人可见。
+草稿完成最终确认后，可在 Releases 的编辑页选择 Publish release，或按下列示例执行；这一步会让附件对所有人可见。`v0.1.6` 已完成发布，后续使用对应版本号。
 
 ```powershell
 gh release edit v0.1.6 --repo YuVerseX/SubGauge --draft=false --prerelease=true --latest=false
