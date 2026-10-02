@@ -12,6 +12,8 @@
 
 公开仓库首次 [Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37017693554) 在提交 `7218a78` 上全部通过：Windows Server 2022、Node.js 24.20.0、Rust 1.99.0 和无头 Chromium，覆盖 202 项布局、7 项详情、49 项 Rust 回归、格式、严格 Clippy、安装包和 ZIP 构建。该提交尚未包含本次新增的分发声明，其构建不能作为新包装内容的验证。
 
+发布候选提交 `e9897615223e0066648499c8c980582ab9748030` 的 [Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37024050353) 已全部通过，包含新增分发声明、上述全部回归与检查、安装包及 ZIP 构建和产物上传。此前两个中间提交在 npm 子进程调用 `Get-FileHash` 时失败，候选提交改用 .NET SHA256 后通过；不将中间失败记录记作通过。后续仅补充发布和验证文档，未改变这个候选包的应用代码。
+
 新增声明后的 `npm run package` 和 `npm run package:portable` 已通过。ZIP 精确包含 `SubGauge.exe`、使用说明和三份法律声明，逐文件 Hash 与构建输出、文档和生成声明一致。实际解出 NSIS 后，四个资源文件逐一匹配；安装器、安装器内 EXE 和免安装 EXE 的内部版本均为 0.1.6。安装器内 EXE 与 Release EXE 只差 Tauri 的三个字节分发类型标记 `UNK → NSS`，已核对 [上游补丁机制](https://github.com/tauri-apps/tauri/commit/0575dd287e021b61d2aedf64d62ae84a2c925fb4)，不要求两种分发 EXE 的 Hash 相同。
 
 临时修改生成清单的 Cargo manifest Hash、修改声明内容，分别确认打包明确拒绝过期输入与内容篡改，精确核对异常消息后恢复原文件；恢复后正式打包成功。打包 Hash 使用 .NET SHA256，不依赖 npm 子进程能否加载 PowerShell 的 `Get-FileHash` 命令。本次声明含七个前端运行包、277 个 Rust normal/build 候选包、实际 WebView2 Loader，以及当前 Rust 标准库原始声明；204 组去重文本未收录版权图标实现或 sourcemap。
@@ -23,7 +25,9 @@
 | `SubGauge_0.1.6_x64-setup.exe` | 2,771,511 | `7fbeab9c47525687d32c0bc9ab057a3b4a6a7da5e399d55fd25acb6f34a1d827` |
 | `SubGauge-0.1.6-windows-x64.zip` | 3,658,826 | `6a2c30d0a9c7345cae3f609ad55fe6e84f0a3dd47256bb54bd70e844fc6c35fc` |
 
-产物和详细检查报告位于 Git 忽略的 `release/`，没有加入源码提交。这些检查不代表 0.1.6 安装升级或原生运行已验收。新包装流程的远端 CI 结果在完成后补记。
+GitHub `v0.1.6` pre-release 草稿固定指向上述候选提交，四个附件已上传；再次下载后，四个文件的 Hash、服务器 digest 和尺寸均与本地一致，发布说明也已核对。草稿仍未公开发布。
+
+产物和详细检查报告位于 Git 忽略的 `release/`，没有加入源码提交。这些检查不代表 0.1.6 安装升级或原生运行已验收。
 
 ## 本次修复的回归证据
 

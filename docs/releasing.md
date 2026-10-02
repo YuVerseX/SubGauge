@@ -2,7 +2,9 @@
 
 源码检查、GitHub 仓库建立和二进制公开发布是不同步骤。本项目的 CI 检查和构建产物上传不自动创建公开 Release。
 
-公开仓库为 [YuVerseX/SubGauge](https://github.com/YuVerseX/SubGauge)，`main` 已推送，MIT、About 描述、topics 和私密漏洞报告已设置。首次远端 CI 已通过，证据见验证记录。
+公开仓库为 [YuVerseX/SubGauge](https://github.com/YuVerseX/SubGauge)，`main` 已推送，MIT、About 描述、topics 和私密漏洞报告已设置。首次及发布候选提交的远端 CI 均已通过，证据见验证记录。
+
+`v0.1.6` 的 pre-release 草稿已创建，固定指向 `e9897615223e0066648499c8c980582ab9748030`。四个附件已上传并下载回查，内容、服务器 digest、尺寸、说明和目标提交一致；尚未公开发布。维护者登录后可在仓库 Releases 查看草稿，后续纯文档提交不移动这个候选版本。
 
 0.1.6 的产品说明、变更、附件名称和验证范围已整理为 [候选发布说明](releases/0.1.6.md)。本地构建产物保留在 Git 忽略的 `release/`，公开二进制前按下文核对对应验收和第三方声明。
 
@@ -40,12 +42,19 @@
 先对完成本地构建的准确提交创建草稿，核对附件名称、下载后 Hash、Release 目标提交和实际 CI 结果，再公开发布。不要通过推送到 `main` 自动发布，也不要把之后变动的分支头误作为已有二进制的来源。
 
 ```powershell
-# 构建、核对并推送源码后，固定这个候选版本的提交
+# 首次创建示例；当前 v0.1.6 草稿已经存在，不要重复执行
+# 构建、核对并推送源码后，固定对应候选版本的提交
 $releaseCommit = git rev-parse HEAD
 gh release create v0.1.6 --repo YuVerseX/SubGauge --target $releaseCommit --draft --prerelease --latest=false --title 'SubGauge 0.1.6 · Windows x64 预览版' --notes-file docs/releases/0.1.6.md release/SubGauge_0.1.6_x64-setup.exe release/SubGauge-0.1.6-windows-x64.zip release/SubGauge_0.1.6_x64-setup.exe.sha256 release/SubGauge-0.1.6-windows-x64.zip.sha256
 gh release view v0.1.6 --repo YuVerseX/SubGauge
 ```
 
 已有同名草稿时先读取并核对，不重复创建或默认覆盖附件。完成最终确认后才取消 draft；首次发布保留 pre-release 标记，不默认设为稳定版 Latest。公开发布后更新 README 的下载状态和版本说明。
+
+确认公开当前候选包后，可在 Releases 的草稿编辑页选择 Publish release，或执行下列命令；这一步会让附件对所有人可见。
+
+```powershell
+gh release edit v0.1.6 --repo YuVerseX/SubGauge --draft=false --prerelease=true --latest=false
+```
 
 操作依据：[GitHub 管理 Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)、[GitHub CLI release create](https://cli.github.com/manual/gh_release_create)、[Tauri Windows 分发](https://v2.tauri.app/distribute/windows-installer/)。
