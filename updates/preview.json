@@ -1,0 +1,15 @@
+{
+  "version": "0.1.8",
+  "notes": "新增内置更新：每日检查，确认下载并验签后安装与重启。\n浮窗加入置顶快捷开关，改进跨屏拖动、展开移动后的收起位置和设置并发保存。\n0.1.6 首次升级需手动安装；实际双屏、混合 DPI 和 Windows 11 仍待验收。",
+  "pub_date": "2026-10-03T12:49:09Z",
+  "platforms": {
+    "windows-x86_64-nsis": {
+      "url": "https://github.com/YuVerseX/SubGauge/releases/download/v0.1.8/SubGauge_0.1.8_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSeFloaXlGM3Z0U1ZaVjNJcmlTOTJuZFBTTU12cjkvNG1Dd0dtUjkvODBYaWR5ZU5lYjJsT0Y2QTFMVmFRZk9RZnBxSFk4cXRYWWVvb2FFcGJJTGwySkNDa3BIaURvZkFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMDE2MTE2CWZpbGU6U3ViR2F1Z2VfMC4xLjhfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMS44CkxxenlSOCtKMXgveDA2dThqQWJuTTY4VDZvM25ja242aTVUM3pSMkM0c0hlZmJHbHV5RG1NakxaWkRrcmg0cVVycHEyQXlKOGpCRmxNRW9xMkdLMUFnPT0K"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/YuVerseX/SubGauge/releases/download/v0.1.8/SubGauge_0.1.8_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSeFloaXlGM3Z0U1ZaVjNJcmlTOTJuZFBTTU12cjkvNG1Dd0dtUjkvODBYaWR5ZU5lYjJsT0Y2QTFMVmFRZk9RZnBxSFk4cXRYWWVvb2FFcGJJTGwySkNDa3BIaURvZkFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMDE2MTE2CWZpbGU6U3ViR2F1Z2VfMC4xLjhfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMS44CkxxenlSOCtKMXgveDA2dThqQWJuTTY4VDZvM25ja242aTVUM3pSMkM0c0hlZmJHbHV5RG1NakxaWkRrcmg0cVVycHEyQXlKOGpCRmxNRW9xMkdLMUFnPT0K"
+    }
+  }
+}
