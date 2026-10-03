@@ -27,11 +27,11 @@ Windows 桌面 Sub2API 个人用量悬浮窗。平时只显示关心的数字，
 
 提供 Windows x64 安装版和免安装 ZIP。安装版运行 `SubGauge_<version>_x64-setup.exe`；免安装版解压后运行 `SubGauge.exe`。两者共享当前 Windows 用户的账号与设置。操作、登录及升级说明见 [使用指南](docs/user-guide.md)。
 
-**下载 0.1.6 预览版：** [安装版](https://github.com/YuVerseX/SubGauge/releases/download/v0.1.6/SubGauge_0.1.6_x64-setup.exe) · [免安装 ZIP](https://github.com/YuVerseX/SubGauge/releases/download/v0.1.6/SubGauge-0.1.6-windows-x64.zip) · [发布说明与 SHA256](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.6)。
+**下载 0.1.8 预览版：** [安装版](https://github.com/YuVerseX/SubGauge/releases/download/v0.1.8/SubGauge_0.1.8_x64-setup.exe) · [免安装 ZIP](https://github.com/YuVerseX/SubGauge/releases/download/v0.1.8/SubGauge-0.1.8-windows-x64.zip) · [发布说明与 SHA256](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.8)。
 
-运行需要 WebView2 Runtime。安装版缺少运行时时会联网下载，免安装版需自行准备。Windows 安装器没有 Authenticode 证书签名；0.1.8 候选更新包另有用于内置验签的 Minisign 签名。
+运行需要 WebView2 Runtime。安装版缺少运行时时会联网下载，免安装版需自行准备。Windows 安装器没有 Authenticode 证书签名；0.1.8 更新包另有用于内置验签的 Minisign 签名。
 
-当前源码为 **0.1.8 候选版**，包含 0.1.7 的置顶和跨屏改进，见 [候选说明](docs/releases/0.1.8.md)；公开下载仍为 **0.1.6**。更新清单尚未公开，旧版第一次升级仍需手动安装。已完成的用户桌面操作验收基线为 **0.1.5 / Windows 10 x64 / 150% 显示缩放**。候选版检查范围见 [验证记录](docs/validation.md)；实际双屏、Windows 11、其他系统 DPI、真实验证码或 TOTP 部署及长期内存稳定性仍待验证。
+当前公开版本为 **0.1.8 预览版**，包含置顶和跨屏改进，见 [发布说明](docs/releases/0.1.8.md)。签名附件与预览更新清单已公开；0.1.6 第一次升级仍需手动安装。二进制源码固定为 `704fc14`，其 [Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37123263193) 已通过；后续发布文档和清单提交不移动版本 Tag。已完成的用户桌面操作验收基线为 **0.1.5 / Windows 10 x64 / 150% 显示缩放**。实际双屏、Windows 11、其他系统 DPI、真实验证码或 TOTP 部署及长期内存稳定性仍待验证，具体范围见 [验证记录](docs/validation.md)。
 
 ## 从源码运行
 
