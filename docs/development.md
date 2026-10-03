@@ -26,7 +26,7 @@ Rust 最低声明依据锁定依赖的 MSRV；本机实测版本为 1.99.0，不
 | `node_modules/`、`dist/`、`src-tauri/target/`、`src-tauri/gen/` | 依赖与生成输出，Git 忽略 |
 | `release/` | 本地安装包、ZIP、校验文件与资源观察，Git 忽略 |
 
-原生职责细分见 [implementation-plan.md](implementation-plan.md)。当前应用没有全量历史数据库、自动更新或远端同步。
+原生职责细分见 [implementation-plan.md](implementation-plan.md)。0.1.8 加入内置更新，自动检查但下载与安装需用户确认；不保存全量历史数据库或远端同步。
 
 ## 启动与预览
 
@@ -54,6 +54,8 @@ npm run typecheck
 npm run build
 npm run test:layout
 npm run test:details
+npm run test:updates
+npm run test:update-packages
 npm run notices
 npm run check:rust
 npm run fmt:rust
@@ -69,7 +71,21 @@ npm run test:rust
 
 `notices` 从当前锁定的 Windows 依赖树和本地包文件生成分发声明，固定补充来源和预编译 Loader 按 SHA256 核对，并复制当前 Rust 工具链的标准库声明。输出位于 `release/legal/`；缺失、来源变化或校验失败时停止，不替换成空声明。首次运行可能下载锁定的 Cargo 包，不额外安装全局工具。生成器需要官方 Rust 工具链的 `COPYRIGHT-library.html`，该文件随本次验证的 rustc 组件提供。
 
-CI 运行相同检查入口，并生成、上传安装包、ZIP 与 SHA256 文件。工作流指定 Windows Server 2022、Node.js 24.20.0 和 Rust 1.99.0，显式安装锁定 Playwright 所需 Chromium；本机浏览器回归默认使用 Edge。失败时也尝试保存示例浏览器报告与布局截图。远端已通过的提交和新增分发检查结果见 [验证记录](validation.md)；runner 镜像仍可能更新，CI 不替代 Windows 10/11 桌面兼容验收。
+`native_window_smoke` 为需本机 WebView2 的独立原生冒烟，普通 Rust 回归默认跳过。它使用隐藏窗口、独立标识和临时数据目录，检查实际置顶标志、移动结束、展开收起位置、系统外圈拖边元数据及监听销毁；不读取日常账号，不合成鼠标输入，也不算真实双屏通过。可运行：
+
+```powershell
+cargo test --locked --manifest-path src-tauri/Cargo.toml native_window_smoke -- --ignored --nocapture
+```
+
+Windows MSVC 的库测试显式链接 Tauri 生成的资源清单，使原生测试也加载 Common Controls v6；安装包沿用 Tauri 的原有资源链接，避免测试启动时缺少 `TaskDialogIndirect`。
+
+`test:updates` 在实际 Vue 页面检查更新状态、迟到事件、下载与安装确认、跳过版本和主题。`test:update-packages` 用公开签名向量验证包、公告版本、全局签名与篡改拒绝。`native_updater_smoke` 单独创建隐藏原生窗口，连接本地测试清单，验证真实 updater 检查、自有有界下载、验签及保存失败后恢复；使用文本测试载荷，不执行安装器，不接触真实账号：
+
+```powershell
+cargo test --locked --manifest-path src-tauri/Cargo.toml native_updater_smoke -- --ignored --nocapture
+```
+
+CI 运行相同检查入口，并用每次临时生成的隔离签名身份构建验证包；不接收正式私钥，不发布 Release 或更新渠道。产物标注 `validation-only`，不能作为正式更新包，其身份不支持日后正式更新。工作流指定 Windows Server 2022、Node.js 24.20.0 和 Rust 1.99.0，显式安装锁定 Playwright 所需 Chromium；本机浏览器回归默认使用 Edge。失败时也尝试保存示例浏览器报告与布局截图。远端已通过的提交和新增分发检查结果见 [验证记录](validation.md)；runner 镜像仍可能更新，CI 不替代 Windows 10/11 桌面兼容验收。
 
 不为静态文案添加永久测试；关键业务规则或公共接口变更应保留有回归价值的测试。临时探针完成后清理。不要提交真实凭据、完整私有响应、用户配置、登录缓存或本机观察 CSV。
 
@@ -80,6 +96,8 @@ CI 运行相同检查入口，并生成、上传安装包、ZIP 与 SHA256 文�
 npm run package
 # 2. 从已有 Release 制作免安装 ZIP、复制安装包、生成校验文件
 npm run package:portable
+# 3. 校验签名、生成待发布清单；不会写入在线渠道
+npm run package:update-manifest
 ```
 
 `package` 在前端构建后自动生成分发声明；安装器包含使用说明及三份法律声明。`package:portable` 不执行编译，须先成功构建当前源码。它核对 npm、Cargo、Tauri 版本，以及 Release EXE 和安装器内部的 `ProductVersion`，并核对声明内容与输入 Hash。ZIP 显式收录 `SubGauge.exe`、`README.md`、`LICENSE`、`THIRD-PARTY-NOTICES.txt` 和 `RUST-STANDARD-LIBRARY-NOTICES.html`，不收录 staging 残留文件、用户配置或验证数据。
@@ -89,19 +107,25 @@ npm run package:portable
 | Release EXE | `src-tauri/target/release/subgauge.exe` |
 | 原始 NSIS | `src-tauri/target/release/bundle/nsis/SubGauge_<version>_x64-setup.exe` |
 | 分发 NSIS | `release/SubGauge_<version>_x64-setup.exe` |
+| 更新签名 | 分发安装包同路径加 `.sig` |
+| 待发布清单 | `release/update-preview.json` |
 | 解压目录 | `release/SubGauge-<version>-windows-x64/` |
 | 免安装 ZIP | `release/SubGauge-<version>-windows-x64.zip` |
-| 校验文件 | 分发安装包、ZIP 同路径加 `.sha256` |
+| 校验文件 | 分发安装包、签名、ZIP 同路径加 `.sha256` |
 
 Tauri 打包会修改 EXE 的 bundle 标识，安装目录 EXE 与打包前 EXE 可能有不同哈希；应分别识别安装包与 ZIP，不能据此判断会话或统计不同。
 
-现有分发为未签名 Windows x64 当前用户安装。两种版本使用相同 `app.subgauge.desktop` 标识、配置目录与单实例机制，升级保留配置。免安装不意味着会话能跨 Windows 用户或跨电脑迁移。
+分发没有 Windows Authenticode 证书签名；内置更新签名是独立的 Minisign 身份。两种版本使用相同 `app.subgauge.desktop` 标识、配置目录与单实例机制，升级保留配置。免安装不意味着会话能跨 Windows 用户或跨电脑迁移。
+
+首次在维护者机器运行 `node scripts/setup-updater-signing.cjs`，仅在没有已有身份且源码没有固定公钥时创建身份；不会静默旋转已有身份。私钥保存在 `%USERPROFILE%\.subgauge\signing\updater.key`，随机密码以当前 Windows 用户 DPAPI 保存在同目录 `password.dpapi`。仅 `src-tauri/updater-public.key` 和配置中的公钥提交 Git。打包脚本临时解密密码传给构建子进程，完成后恢复环境。外部构建可显式提供 `TAURI_SIGNING_PRIVATE_KEY` 与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`，不得打印或提交。
+
+应离线备份加密私钥及可恢复的密码；只备份 `password.dpapi` 不能跨电脑恢复。正式私钥不得交给普通 PR 工作流。CI 的 `prepare-ci-signing.cjs --validation-only` 只在明确的 GitHub Actions 环境修改一次性 checkout 公钥，不更改仓库身份。正式附件必须使用维护者身份构建，签名校验失败时打包停止。发布步骤见 [发布流程](releasing.md)。
 
 生成构建文件不代表已经完成安装、跨系统或桌面验收。发布前以 [validation.md](validation.md) 核对适用版本、测试范围和未执行项，并按 [发布流程](releasing.md) 检查公开源码及完整历史。
 
 ## 用户数据与安全边界
 
-应用数据在 `%LOCALAPPDATA%\app.subgauge.desktop`，与工作区生成目录分离。`accounts.v1.json` 为版本化配置与 DPAPI 加密会话，`window.json` 保存窗口位置及两态逻辑尺寸；不得将这些文件用于示例夹具或打包。
+应用数据在 `%LOCALAPPDATA%\app.subgauge.desktop`，与工作区生成目录分离。`accounts.v1.json` 为版本化配置与 DPAPI 加密会话，`window.json` 保存窗口位置及两态逻辑尺寸，`updates.v1.json` 保存更新偏好与安装尝试；不得将这些文件用于示例夹具或打包。
 
 配置损坏或版本未知时保留原文件并报告错误；会话解密失败时要求该账号重新登录。DPAPI 为当前用户保护，不能宣称阻止以相同 Windows 用户身份运行的程序访问。密码不保存，前端状态不持有访问或刷新令牌，错误不回显认证载荷。
 

@@ -288,6 +288,261 @@ async fn legacy_settings_and_theme_changes_preserve_account_configuration() {
     cleanup(&e);
 }
 
+#[tokio::test]
+async fn settings_patch_preserves_unrelated_fields_and_account_changes() {
+    let e = engine();
+    let a = account("https://fixture.example".into(), "settings-fixture");
+    seed(&e, a.clone(), session(false));
+    let mut update = e
+        .begin_settings_update(
+            AppSettingsPatch {
+                theme: Some(AppearanceTheme::Dark),
+                ..AppSettingsPatch::default()
+            },
+            Some(AppSettingsPatch {
+                theme: Some(AppearanceTheme::Light),
+                // Unsubmitted fields must not participate in conflict detection.
+                always_on_top: Some(false),
+                ..AppSettingsPatch::default()
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(update.previous().theme, AppearanceTheme::Light);
+    assert_eq!(update.next().theme, AppearanceTheme::Dark);
+    assert_eq!(e.bootstrap().await.settings.theme, AppearanceTheme::Light);
+    {
+        // An account update can finish while the native settings effect is pending.
+        let mut state = e.state.lock().unwrap();
+        state.config.accounts[0].summary.preferences.alias = "Updated account".into();
+        state.generation += 1;
+    }
+    let saved = update.commit().await.unwrap();
+    assert_eq!(saved.generation, 2);
+    assert_eq!(saved.settings.theme, AppearanceTheme::Dark);
+    assert!(saved.settings.always_on_top);
+    assert_eq!(saved.settings.recent_refresh_seconds, 10);
+    assert_eq!(saved.accounts[0].preferences.alias, "Updated account");
+    let restarted = Engine::new(e.path.parent().unwrap().to_owned()).unwrap();
+    let saved = restarted.bootstrap().await;
+    assert_eq!(saved.settings.theme, AppearanceTheme::Dark);
+    assert_eq!(saved.accounts[0].preferences.alias, "Updated account");
+    cleanup(&e);
+}
+
+#[tokio::test]
+async fn settings_transactions_serialize_without_overwriting_another_field() {
+    let e = engine();
+    let mut first = e
+        .begin_settings_update(
+            AppSettingsPatch {
+                always_on_top: Some(false),
+                ..AppSettingsPatch::default()
+            },
+            Some(AppSettingsPatch {
+                always_on_top: Some(true),
+                ..AppSettingsPatch::default()
+            }),
+        )
+        .await
+        .unwrap();
+    let mut second = std::pin::pin!(e.begin_settings_update(
+        AppSettingsPatch {
+            theme: Some(AppearanceTheme::Dark),
+            ..AppSettingsPatch::default()
+        },
+        Some(AppSettingsPatch {
+            theme: Some(AppearanceTheme::Light),
+            ..AppSettingsPatch::default()
+        }),
+    ));
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(second.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    let old_response = e.bootstrap().await;
+    let first_response = first.commit().await.unwrap();
+    assert_eq!(first_response.generation, old_response.generation + 1);
+    // Keep serial ownership even after commit until native/tray reconciliation ends.
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(second.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    drop(first);
+    let mut second = second.await.unwrap();
+    let latest = second.commit().await.unwrap();
+    assert_eq!(latest.generation, first_response.generation + 1);
+    assert_eq!(latest.settings.theme, AppearanceTheme::Dark);
+    assert!(!latest.settings.always_on_top);
+    let restarted = Engine::new(e.path.parent().unwrap().to_owned()).unwrap();
+    assert_eq!(restarted.bootstrap().await.settings, latest.settings);
+    cleanup(&e);
+}
+
+#[tokio::test]
+async fn settings_patch_rejects_same_field_conflict_and_missing_baseline() {
+    let e = engine();
+    let mut first = e
+        .begin_settings_update(
+            AppSettingsPatch {
+                theme: Some(AppearanceTheme::Dark),
+                ..AppSettingsPatch::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    first.commit().await.unwrap();
+    drop(first);
+    let expected_disk = std::fs::read(&e.path).unwrap();
+    let patch = AppSettingsPatch {
+        theme: Some(AppearanceTheme::System),
+        ..AppSettingsPatch::default()
+    };
+    let conflict = e
+        .begin_settings_update(
+            patch.clone(),
+            Some(AppSettingsPatch {
+                theme: Some(AppearanceTheme::Light),
+                ..AppSettingsPatch::default()
+            }),
+        )
+        .await
+        .err()
+        .expect("a stale edit of the same field must conflict");
+    assert!(conflict.contains("主题") && conflict.contains("重新确认"));
+    let missing = e
+        .begin_settings_update(patch, Some(AppSettingsPatch::default()))
+        .await
+        .err()
+        .expect("each changed field requires its editing baseline");
+    assert!(missing.contains("原值"));
+    assert_eq!(e.bootstrap().await.generation, 1);
+    assert_eq!(std::fs::read(&e.path).unwrap(), expected_disk);
+    cleanup(&e);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn settings_save_failure_retains_old_state_and_serializes_native_rollback() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let e = engine();
+    e.persist().unwrap();
+    let old_disk = std::fs::read(&e.path).unwrap();
+    // Deny replacement of this isolated fixture; do not alter actual user files.
+    let locked_file = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&e.path)
+        .unwrap();
+    let mut update = e
+        .begin_settings_update(
+            AppSettingsPatch {
+                always_on_top: Some(false),
+                ..AppSettingsPatch::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(update.commit().await.is_err());
+    let state = e.bootstrap().await;
+    assert_eq!(state.settings, AppSettings::default());
+    assert_eq!(state.generation, 0);
+    let mut next = std::pin::pin!(e.begin_settings_update(AppSettingsPatch::default(), None));
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(next.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    drop(locked_file);
+    assert_eq!(std::fs::read(&e.path).unwrap(), old_disk);
+    drop(update);
+    drop(next.await.unwrap());
+    let leftovers = std::fs::read_dir(e.path.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        leftovers,
+        vec![std::ffi::OsString::from("accounts.v1.json")]
+    );
+    cleanup(&e);
+}
+
+#[tokio::test]
+async fn failed_native_rollback_reports_actual_state_without_background_persistence() {
+    let e = engine();
+    e.persist().unwrap();
+    let mut update = e
+        .begin_settings_update(
+            AppSettingsPatch {
+                always_on_top: Some(false),
+                ..AppSettingsPatch::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    update.reflect_actual_topmost(false);
+    let actual = e.bootstrap().await;
+    assert!(!actual.settings.always_on_top);
+    assert_eq!(actual.generation, 1);
+    e.persist().unwrap();
+    let on_disk: Config = serde_json::from_slice(&std::fs::read(&e.path).unwrap()).unwrap();
+    assert!(on_disk.settings.always_on_top);
+    drop(update);
+    let mut retry = e
+        .begin_settings_update(
+            AppSettingsPatch {
+                always_on_top: Some(false),
+                ..AppSettingsPatch::default()
+            },
+            Some(AppSettingsPatch {
+                always_on_top: Some(false),
+                ..AppSettingsPatch::default()
+            }),
+        )
+        .await
+        .unwrap();
+    let saved = retry.commit().await.unwrap();
+    assert!(!saved.settings.always_on_top);
+    assert_eq!(saved.generation, 2);
+    let restarted = Engine::new(e.path.parent().unwrap().to_owned()).unwrap();
+    assert!(!restarted.bootstrap().await.settings.always_on_top);
+    assert!(e.state.lock().unwrap().actual_topmost.is_none());
+    cleanup(&e);
+}
+
+#[tokio::test]
+async fn settings_noop_and_invalid_values_do_not_create_a_new_generation() {
+    let e = engine();
+    let mut update = e
+        .begin_settings_update(AppSettingsPatch::default(), None)
+        .await
+        .unwrap();
+    assert_eq!(update.commit().await.unwrap().generation, 0);
+    assert!(!e.path.exists());
+    drop(update);
+    for opacity in [f64::NAN, 0.1, 1.1] {
+        assert!(e
+            .begin_settings_update(
+                AppSettingsPatch {
+                    opacity: Some(opacity),
+                    ..AppSettingsPatch::default()
+                },
+                None,
+            )
+            .await
+            .is_err());
+    }
+    assert_eq!(e.bootstrap().await.generation, 0);
+    assert_eq!(e.bootstrap().await.settings, AppSettings::default());
+    cleanup(&e);
+}
+
 #[test]
 fn unknown_theme_preserves_original_config() {
     let e = engine();

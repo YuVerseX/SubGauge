@@ -28,6 +28,13 @@ if (-not (Test-Path -LiteralPath $installer)) { throw 'Build the matching NSIS i
 if ((Get-Item -LiteralPath $installer).VersionInfo.ProductVersion -ne $manifest.version) {
     throw 'The NSIS installer has a different version. Rebuild before packaging.'
 }
+$installerSignature = "$installer.sig"
+if (-not (Test-Path -LiteralPath $installerSignature -PathType Leaf)) {
+    throw 'The matching signed NSIS installer is required. Rebuild with updater signing configured.'
+}
+# Verify authenticity and the signed version before copying any distribution files.
+& node (Join-Path $PSScriptRoot 'prepare-update-manifest.cjs') --installer $installer --verify-only
+if ($LASTEXITCODE -ne 0) { throw 'Updater package signature validation failed. No new distribution was packaged.' }
 $release = Join-Path $repo 'release'
 New-Item -ItemType Directory -Force -Path $release | Out-Null
 $stage = Join-Path $release "SubGauge-$($manifest.version)-windows-x64"
@@ -64,7 +71,8 @@ Copy-Item -LiteralPath $standardLibrary -Destination (Join-Path $stage 'RUST-STA
 # Explicit files avoid carrying stale staging files into a new release.
 Compress-Archive -LiteralPath @((Join-Path $stage 'SubGauge.exe'),$guide,(Join-Path $stage 'LICENSE'),(Join-Path $stage 'THIRD-PARTY-NOTICES.txt'),(Join-Path $stage 'RUST-STANDARD-LIBRARY-NOTICES.html')) -DestinationPath "$stage.zip" -Force
 Copy-Item -LiteralPath $installer -Destination $release
-foreach ($artifact in @("$stage.zip",(Join-Path $release ([System.IO.Path]::GetFileName($installer))))) {
+Copy-Item -LiteralPath $installerSignature -Destination $release
+foreach ($artifact in @("$stage.zip",(Join-Path $release ([System.IO.Path]::GetFileName($installer))),(Join-Path $release ([System.IO.Path]::GetFileName($installerSignature))))) {
     $hash = Get-DistributionFileHash $artifact
     [System.IO.File]::WriteAllText("$artifact.sha256", "$hash  $([System.IO.Path]::GetFileName($artifact))`n")
     [pscustomobject]@{ Algorithm='SHA256'; Hash=$hash; Path=$artifact }

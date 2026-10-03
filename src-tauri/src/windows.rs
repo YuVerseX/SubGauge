@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, path::PathBuf, sync::Mutex};
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, PhysicalUnit, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, WindowSizeConstraints,
@@ -9,6 +13,8 @@ use tauri::{
 #[path = "windows_tests.rs"]
 mod tests;
 
+mod native;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct Rect {
     x: i32,
@@ -17,6 +23,30 @@ struct Rect {
     height: u32,
 }
 impl Rect {
+    fn intersection(self, other: Rect) -> u64 {
+        let width = (i64::from(self.x) + i64::from(self.width))
+            .min(i64::from(other.x) + i64::from(other.width))
+            - i64::from(self.x.max(other.x));
+        let height = (i64::from(self.y) + i64::from(self.height))
+            .min(i64::from(other.y) + i64::from(other.height))
+            - i64::from(self.y.max(other.y));
+        width.max(0) as u64 * height.max(0) as u64
+    }
+    fn contains(self, point: (i32, i32)) -> bool {
+        i64::from(point.0) >= i64::from(self.x)
+            && i64::from(point.0) < i64::from(self.x) + i64::from(self.width)
+            && i64::from(point.1) >= i64::from(self.y)
+            && i64::from(point.1) < i64::from(self.y) + i64::from(self.height)
+    }
+    fn distance(self, other: Rect) -> u64 {
+        let dx = (i64::from(self.x) - i64::from(other.x) - i64::from(other.width))
+            .max(i64::from(other.x) - i64::from(self.x) - i64::from(self.width))
+            .max(0) as u64;
+        let dy = (i64::from(self.y) - i64::from(other.y) - i64::from(other.height))
+            .max(i64::from(other.y) - i64::from(self.y) - i64::from(self.height))
+            .max(0) as u64;
+        dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy))
+    }
     fn clamped(self, area: Rect) -> Self {
         let max_x = area
             .x
@@ -34,6 +64,61 @@ impl Rect {
             ..self
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Screen {
+    bounds: Rect,
+    work: Rect,
+    scale: f64,
+}
+
+fn select_screen(
+    screens: &[Screen],
+    rect: Rect,
+    pointer: Option<(i32, i32)>,
+    origin: Option<Rect>,
+) -> Option<Screen> {
+    screens.iter().copied().max_by_key(|screen| {
+        let area = rect.intersection(screen.bounds);
+        (
+            area,
+            std::cmp::Reverse(if area == 0 {
+                rect.distance(screen.bounds)
+            } else {
+                0
+            }),
+            pointer.is_some_and(|point| screen.bounds.contains(point)),
+            origin == Some(screen.bounds),
+            std::cmp::Reverse((screen.bounds.x, screen.bounds.y)),
+        )
+    })
+}
+
+fn screens(window: &WebviewWindow) -> Vec<Screen> {
+    window
+        .available_monitors()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|monitor| {
+            let area = monitor.work_area();
+            Screen {
+                bounds: Rect {
+                    x: monitor.position().x,
+                    y: monitor.position().y,
+                    width: monitor.size().width,
+                    height: monitor.size().height,
+                },
+                work: Rect {
+                    x: area.position.x,
+                    y: area.position.y,
+                    width: area.size.width,
+                    height: area.size.height,
+                },
+                scale: monitor.scale_factor(),
+            }
+        })
+        .collect()
 }
 const CONFIG_VERSION: u32 = 1;
 const DEFAULT_WIDTH: f64 = 316.0;
@@ -147,6 +232,13 @@ struct ManualResize {
     changed_height: bool,
 }
 #[derive(Clone, Copy)]
+struct ManualMove {
+    generation: u64,
+    start: Rect,
+    scale: f64,
+    origin: Option<Rect>,
+}
+#[derive(Clone, Copy)]
 struct LayoutRequest {
     height: f64,
     min_height: f64,
@@ -165,6 +257,9 @@ struct Layout {
     natural_height: f64,
     min_height: f64,
     resize: Option<ManualResize>,
+    movement: Option<ManualMove>,
+    pending_layout: Option<LayoutRequest>,
+    relocate_collapsed: bool,
     resize_generation: u64,
     layout_generation: u64,
     program_sizes: VecDeque<PhysicalSize<u32>>,
@@ -181,6 +276,9 @@ impl Default for Layout {
             natural_height: 240.0,
             min_height: 100.0,
             resize: None,
+            movement: None,
+            pending_layout: None,
+            relocate_collapsed: false,
             resize_generation: 0,
             layout_generation: 0,
             program_sizes: VecDeque::new(),
@@ -188,6 +286,84 @@ impl Default for Layout {
     }
 }
 impl Layout {
+    fn active(&self) -> bool {
+        self.resize.is_some() || self.movement.is_some()
+    }
+
+    fn adopt_system_gesture(&mut self, control: &native::Control) {
+        let Some((generation, gesture)) = control.take_system_gesture() else {
+            return;
+        };
+        self.resize_generation = generation;
+        self.layout_generation = self.layout_generation.wrapping_add(1);
+        if let Some(direction) = gesture.direction {
+            let (horizontal, vertical) = if self.menu.is_some() {
+                (false, false)
+            } else {
+                resize_axes(direction).unwrap_or((false, false))
+            };
+            self.resize = Some(ManualResize {
+                generation,
+                horizontal,
+                vertical,
+                start: gesture.size,
+                changed_width: false,
+                changed_height: false,
+            });
+        } else {
+            self.movement = Some(ManualMove {
+                generation,
+                start: gesture.rect,
+                scale: gesture.scale,
+                origin: None,
+            });
+        }
+    }
+
+    fn repair_anchors(&mut self, available: &[Screen], current: Rect) -> bool {
+        if available.is_empty() {
+            return false;
+        }
+        let mut repaired = false;
+        for rect in [
+            &mut self.collapsed,
+            &mut self.menu,
+            &mut self.pending_restore,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if available
+                .iter()
+                .all(|screen| rect.intersection(screen.work) == 0)
+            {
+                rect.x = current.x;
+                rect.y = current.y;
+                repaired = true;
+            }
+        }
+        repaired
+    }
+
+    fn record_move(&mut self, current: Rect, scale: f64) {
+        let Some(movement) = self.movement else {
+            return;
+        };
+        if (current.x, current.y) == (movement.start.x, movement.start.y) {
+            return;
+        }
+        self.relocate_collapsed = true;
+        if let Some(compact) = self.collapsed.as_mut() {
+            compact.x = current.x;
+            compact.y = current.y;
+            compact.width = (f64::from(compact.width) / movement.scale * scale)
+                .round()
+                .max(1.0) as u32;
+            compact.height = (f64::from(compact.height) / movement.scale * scale)
+                .round()
+                .max(1.0) as u32;
+        }
+    }
     fn plan(&self, current: Rect, request: LayoutRequest) -> Option<(Self, Option<Rect>)> {
         if request
             .expected_generation
@@ -198,7 +374,11 @@ impl Layout {
         let mut next = self.clone();
         next.natural_height = request.height;
         next.min_height = request.min_height;
-        let restore = if next.resize.is_some() {
+        let restore = if next.active() {
+            next.pending_layout = Some(LayoutRequest {
+                expected_generation: None,
+                ..request
+            });
             None
         } else {
             next.transition(current, request.expanded, request.menu_open)
@@ -208,6 +388,12 @@ impl Layout {
     }
 
     fn dpi_request(&self) -> LayoutRequest {
+        if let Some(request) = self.pending_layout {
+            return LayoutRequest {
+                expected_generation: Some(self.layout_generation),
+                ..request
+            };
+        }
         LayoutRequest {
             height: self.natural_height,
             min_height: self.min_height,
@@ -283,6 +469,9 @@ impl Layout {
         self.resize_generation = self.resize_generation.wrapping_add(1);
         self.layout_generation = self.layout_generation.wrapping_add(1);
         self.resize = None;
+        self.movement = None;
+        self.pending_layout = None;
+        self.relocate_collapsed = false;
     }
 }
 
@@ -359,18 +548,23 @@ fn resize_axes(direction: &str) -> Option<(bool, bool)> {
 }
 pub struct Windows {
     layout: Mutex<Layout>,
-    saving: Mutex<()>,
+    saving: Mutex<Option<Vec<u8>>>,
     details: Mutex<()>,
     path: PathBuf,
+    native: Arc<native::Control>,
 }
 impl Windows {
     pub fn new(path: PathBuf) -> Self {
         Self {
             layout: Mutex::new(Layout::default()),
-            saving: Mutex::new(()),
+            saving: Mutex::new(None),
             details: Mutex::new(()),
             path,
+            native: Arc::new(native::Control::default()),
         }
+    }
+    pub fn install_native_hook(&self, app: &AppHandle) -> Result<(), String> {
+        native::install(app, self.native.clone())
     }
     pub fn restore(&self, app: &AppHandle) {
         let Some(window) = app.get_webview_window("float") else {
@@ -405,17 +599,22 @@ impl Windows {
         self.clamp(app);
     }
     pub fn save(&self, app: &AppHandle) {
+        let _ = self.save_checked(app);
+    }
+    pub fn save_checked(&self, app: &AppHandle) -> Result<(), String> {
         // Query the UI before taking the save lock; UI callbacks may save concurrently.
         // The save lock must never make the event loop wait for a thread querying that loop.
         let current = capture(app);
-        let Ok(_saving) = self.saving.lock() else {
-            return;
-        };
-        let Ok(mut layout) = self.layout.try_lock() else {
-            return;
-        };
-        if !layout.writable || layout.resize.is_some() {
-            return;
+        let mut saving = self.saving.lock().map_err(|_| "窗口保存不可用")?;
+        let mut layout = self
+            .layout
+            .try_lock()
+            .map_err(|_| "窗口正在调整，请稍后重试")?;
+        if !layout.writable {
+            return Err("窗口配置无法保存，原文件已保留。".into());
+        }
+        if layout.active() || self.native.active() {
+            return Err("请结束浮窗拖动或缩放后再安装更新。".into());
         }
         if let Some(rect) = layout.saved_rect(current) {
             layout.config.position = Some(SavedPosition {
@@ -425,11 +624,17 @@ impl Windows {
         }
         let config = layout.config.clone();
         drop(layout);
-        if let Ok(bytes) = serde_json::to_vec(&config) {
-            let _ = crate::core::atomic_write(&self.path, &bytes);
+        let bytes = serde_json::to_vec(&config).map_err(|_| "窗口配置编码失败")?;
+        if saving.as_ref() != Some(&bytes) {
+            crate::core::atomic_write(&self.path, &bytes)?;
+            *saving = Some(bytes);
         }
+        Ok(())
     }
     pub fn clamp(&self, app: &AppHandle) {
+        if self.native.active() {
+            return;
+        }
         let Some(window) = app.get_webview_window("float") else {
             return;
         };
@@ -439,25 +644,22 @@ impl Windows {
         let Ok(size) = window.outer_size() else {
             return;
         };
-        let monitor = window
-            .current_monitor()
-            .ok()
-            .flatten()
-            .or_else(|| window.primary_monitor().ok().flatten());
-        if let Some(monitor) = monitor {
-            let area = monitor.work_area();
+        let current = Rect {
+            x: pos.x,
+            y: pos.y,
+            width: size.width,
+            height: size.height,
+        };
+        if let Some(screen) = select_screen(&screens(&window), current, None, None) {
             let rect = Rect {
-                x: pos.x,
-                y: pos.y,
-                width: size.width,
-                height: size.height,
+                width: current.width.min(screen.work.width),
+                height: current.height.min(screen.work.height),
+                ..current
             }
-            .clamped(Rect {
-                x: area.position.x,
-                y: area.position.y,
-                width: area.size.width,
-                height: area.size.height,
-            });
+            .clamped(screen.work);
+            if (size.width, size.height) != (rect.width, rect.height) {
+                let _ = window.set_size(PhysicalSize::new(rect.width, rect.height));
+            }
             if pos.x != rect.x || pos.y != rect.y {
                 let _ = window.set_position(PhysicalPosition::new(rect.x, rect.y));
             }
@@ -466,10 +668,11 @@ impl Windows {
     pub fn on_moved(&self, app: &AppHandle) {
         // Programmatic layout restores a position before changing the height.
         // Do not clamp that intermediate rectangle with the previous size.
-        let Ok(layout) = self.layout.try_lock() else {
+        let Ok(mut layout) = self.layout.try_lock() else {
             return;
         };
-        if layout.resize.is_some() {
+        layout.adopt_system_gesture(&self.native);
+        if layout.active() || self.native.active() {
             return;
         }
         self.clamp(app);
@@ -501,6 +704,15 @@ impl Windows {
         app: &AppHandle,
         request: LayoutRequest,
     ) -> Result<FloatSizeState, String> {
+        self.layout_request_on_screen(app, request, None)
+    }
+
+    fn layout_request_on_screen(
+        &self,
+        app: &AppHandle,
+        request: LayoutRequest,
+        destination: Option<Screen>,
+    ) -> Result<FloatSizeState, String> {
         let LayoutRequest {
             height,
             min_height,
@@ -513,50 +725,54 @@ impl Windows {
         let window = app.get_webview_window("float").ok_or("浮窗不可用")?;
         let current = capture(app).ok_or("无法读取浮窗位置")?;
         let mut state = self.layout.lock().map_err(|_| "窗口状态不可用")?;
+        state.adopt_system_gesture(&self.native);
         // The generation is checked while holding the same mutex used to commit layout.
         // An old DPI task cannot reapply a mode/menu snapshot after a newer user action.
         let Some((mut next, restore)) = state.plan(current, request) else {
             return self.size_state(&window, &state);
         };
-        let resizing = next.resize.is_some();
+        if next.active() || self.native.active() {
+            *state = next;
+            return self.size_state(&window, &state);
+        }
         if let Some(rect) = restore {
             window
                 .set_position(PhysicalPosition::new(rect.x, rect.y))
                 .map_err(|_| "无法恢复浮窗位置")?;
         }
-        // Use the destination monitor after restoring a saved position.
-        let monitor = window
-            .current_monitor()
-            .ok()
-            .flatten()
-            .or_else(|| window.primary_monitor().ok().flatten());
-        let scale = match &monitor {
-            Some(monitor) => monitor.scale_factor(),
+        // Choose from individual monitors, including negative coordinates and layout gaps.
+        let current = capture(app).ok_or("无法读取浮窗位置")?;
+        let monitor = destination.or_else(|| select_screen(&screens(&window), current, None, None));
+        let scale = match monitor {
+            Some(monitor) => monitor.scale,
             None => window.scale_factor().map_err(|_| "无法读取显示缩放")?,
         };
-        let area = monitor.as_ref().map(|m| {
-            let area = m.work_area();
-            Rect {
-                x: area.position.x,
-                y: area.position.y,
-                width: area.size.width,
-                height: area.size.height,
-            }
-        });
+        let area = monitor.map(|m| m.work);
         let bounds = Bounds::new(next.min_height, scale, area);
         let mode = next.config.mode(next.expanded);
         let size = bounds.size(mode, height, menu_open, scale);
-        if !resizing {
-            next.remember_program_size(size);
-        }
+        next.remember_program_size(size);
         window
             .set_size_constraints(bounds.constraints(scale))
             .map_err(|_| "无法设置浮窗大小范围")?;
-        if !resizing {
-            if window.inner_size().ok() != Some(size) {
-                window.set_size(size).map_err(|_| "无法调整浮窗大小")?;
+        if window.inner_size().ok() != Some(size) {
+            window.set_size(size).map_err(|_| "无法调整浮窗大小")?;
+        }
+        if let Some(area) = area {
+            let actual = capture(app).ok_or("无法读取浮窗位置")?;
+            let final_rect = actual.clamped(area);
+            if (actual.x, actual.y) != (final_rect.x, final_rect.y) {
+                window
+                    .set_position(PhysicalPosition::new(final_rect.x, final_rect.y))
+                    .map_err(|_| "无法恢复浮窗位置")?;
             }
-            self.clamp(app);
+        }
+        if next.relocate_collapsed {
+            if let (Some(compact), Some(actual)) = (next.collapsed.as_mut(), capture(app)) {
+                compact.x = actual.x;
+                compact.y = actual.y;
+            }
+            next.relocate_collapsed = false;
         }
         *state = next;
         let result = self.size_state(&window, &state)?;
@@ -591,6 +807,10 @@ impl Windows {
         let Ok(mut state) = self.layout.try_lock() else {
             return;
         };
+        state.adopt_system_gesture(&self.native);
+        if state.movement.is_some() {
+            return;
+        }
         // Resize notifications can arrive after a newer layout. Never publish/save the old size.
         if window.inner_size().ok() != Some(size) || state.program_sizes.contains(&size) {
             return;
@@ -611,8 +831,7 @@ impl Windows {
         };
         let request = state.dpi_request();
         drop(state);
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
+        native::schedule(app.clone(), move |app| {
             let _ = app.state::<Windows>().layout_request(&app, request);
         });
     }
@@ -625,10 +844,10 @@ impl Windows {
         if state.menu.is_some() {
             return Err("请先关闭账号菜单再调整大小".into());
         }
-        if state.resize.is_some() {
-            return Err("正在调整浮窗大小".into());
+        if state.active() || self.native.active() {
+            return Err("正在移动或调整浮窗大小".into());
         }
-        state.resize_generation = state.resize_generation.wrapping_add(1);
+        state.resize_generation = self.native.next_generation();
         state.layout_generation = state.layout_generation.wrapping_add(1);
         let generation = state.resize_generation;
         state.resize = Some(ManualResize {
@@ -639,43 +858,108 @@ impl Windows {
             changed_width: false,
             changed_height: false,
         });
+        self.native.begin(generation);
         let result = self.size_state(&window, &state)?;
         drop(state);
         self.emit_size(app, result);
         Ok(generation)
     }
 
-    fn finish_resize(&self, app: &AppHandle, generation: u64) {
+    fn begin_move(&self, app: &AppHandle) -> Result<u64, String> {
+        let window = app.get_webview_window("float").ok_or("浮窗不可用")?;
+        let start = capture(app).ok_or("无法读取浮窗位置")?;
+        let scale = window.scale_factor().map_err(|_| "无法读取显示缩放")?;
+        let origin = select_screen(&screens(&window), start, None, None).map(|s| s.bounds);
+        let mut state = self.layout.lock().map_err(|_| "窗口状态不可用")?;
+        if state.menu.is_some() {
+            return Err("请先关闭账号菜单再移动浮窗".into());
+        }
+        if state.active() || self.native.active() {
+            return Err("正在移动或调整浮窗大小".into());
+        }
+        state.resize_generation = self.native.next_generation();
+        state.layout_generation = state.layout_generation.wrapping_add(1);
+        let generation = state.resize_generation;
+        state.movement = Some(ManualMove {
+            generation,
+            start,
+            scale,
+            origin,
+        });
+        self.native.begin(generation);
+        Ok(generation)
+    }
+
+    fn finish_gesture(&self, app: &AppHandle, generation: u64) {
         let Some(window) = app.get_webview_window("float") else {
             return;
         };
         let Ok(mut state) = self.layout.lock() else {
             return;
         };
-        if state.resize.map(|r| r.generation) != Some(generation) {
+        state.adopt_system_gesture(&self.native);
+        if state
+            .resize
+            .map(|r| r.generation)
+            .or(state.movement.map(|m| m.generation))
+            != Some(generation)
+        {
             return;
         }
-        if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
+        let current = capture(app);
+        let destination = current.and_then(|rect| {
+            select_screen(
+                &screens(&window),
+                rect,
+                native::pointer(),
+                state.movement.and_then(|m| m.origin),
+            )
+        });
+        let scale = destination
+            .map(|s| s.scale)
+            .or_else(|| window.scale_factor().ok())
+            .unwrap_or(1.0);
+        if let Ok(size) = window.inner_size() {
             state.record_manual_size(size, scale);
         }
-        state.resize = None;
-        self.clamp(app);
-        let result = self.size_state(&window, &state).ok();
-        drop(state);
-        self.save(app);
-        if let Some(result) = result {
-            self.emit_size(app, result);
+        if let Some(current) = current {
+            state.record_move(current, scale);
         }
+        state.resize = None;
+        state.movement = None;
+        state.layout_generation = state.layout_generation.wrapping_add(1);
+        self.native.finish(generation);
+        let request = state
+            .pending_layout
+            .take()
+            .unwrap_or_else(|| state.dpi_request());
+        drop(state);
+        let _ = self.layout_request_on_screen(app, request, destination);
     }
 
-    fn resize_active(&self, generation: u64) -> bool {
-        self.layout
-            .lock()
-            .is_ok_and(|state| state.resize.map(|r| r.generation) == Some(generation))
+    pub fn recover(&self, app: &AppHandle) {
+        if self.native.active() {
+            return;
+        }
+        let Ok(state) = self.layout.try_lock() else {
+            return;
+        };
+        let request = state.dpi_request();
+        drop(state);
+        let _ = self.layout_request(app, request);
+        if let (Some(window), Some(current)) = (app.get_webview_window("float"), capture(app)) {
+            if let Ok(mut state) = self.layout.try_lock() {
+                state.repair_anchors(&screens(&window), current);
+            }
+            self.save(app);
+        }
     }
 
     fn reset(&self, app: &AppHandle) -> Result<(), String> {
         let mut state = self.layout.lock().map_err(|_| "窗口状态不可用")?;
+        if state.active() || self.native.active() {
+            return Err("请在拖动结束后恢复默认大小".into());
+        }
         state.reset_sizes();
         let request = state.dpi_request();
         drop(state);
@@ -697,7 +981,7 @@ fn capture(app: &AppHandle) -> Option<Rect> {
 pub fn show_float_impl(app: &AppHandle) -> Result<(), String> {
     let window = app.get_webview_window("float").ok_or("浮窗不可用")?;
     window.unminimize().map_err(|_| "无法恢复浮窗")?;
-    app.state::<Windows>().clamp(app);
+    app.state::<Windows>().recover(app);
     window.show().map_err(|_| "无法显示浮窗")?;
     window.set_focus().map_err(|_| "无法激活浮窗".into())
 }
@@ -773,13 +1057,66 @@ pub async fn set_float_layout(
     expanded: bool,
     menu_open: Option<bool>,
 ) -> Result<FloatSizeState, String> {
-    app.state::<Windows>().layout(
-        &app,
-        height,
-        min_height,
-        expanded,
-        menu_open.unwrap_or(false),
-    )
+    on_ui(app, move |app| {
+        check_update_install(&app)?;
+        app.state::<Windows>().layout(
+            &app,
+            height,
+            min_height,
+            expanded,
+            menu_open.unwrap_or(false),
+        )
+    })
+    .await
+}
+
+pub(crate) async fn on_ui<T: Send + 'static>(
+    app: AppHandle,
+    task: impl FnOnce(AppHandle) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    let target = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = send.send(task(target));
+    })
+    .map_err(|_| "窗口线程不可用")?;
+    receive.await.map_err(|_| "窗口操作已取消")?
+}
+
+fn check_gesture_start(app: AppHandle, generation: u64) {
+    // One bounded recovery for a dispatched gesture that never entered the
+    // system loop (e.g. pointer released before dispatch). No idle polling.
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let _ = on_ui(app, move |app| {
+            if app.state::<Windows>().native.pending(generation) {
+                app.state::<Windows>().finish_gesture(&app, generation);
+            }
+            Ok(())
+        })
+        .await;
+    });
+}
+
+#[tauri::command]
+pub async fn start_float_drag(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    if window.label() != "float" {
+        return Err("只能移动浮窗".into());
+    }
+    on_ui(app, move |app| {
+        check_update_install(&app)?;
+        if !app.state::<Windows>().native.ready() {
+            return Err("浮窗移动监听不可用".into());
+        }
+        let generation = app.state::<Windows>().begin_move(&app)?;
+        if window.start_dragging().is_err() {
+            app.state::<Windows>().finish_gesture(&app, generation);
+            return Err("无法开始移动浮窗".into());
+        }
+        check_gesture_start(app, generation);
+        Ok(())
+    })
+    .await
 }
 #[tauri::command]
 pub async fn start_float_resize(
@@ -790,54 +1127,92 @@ pub async fn start_float_resize(
     if window.label() != "float" {
         return Err("只能调整浮窗大小".into());
     }
-    let generation = app.state::<Windows>().begin_resize(&app, &direction)?;
-    let native_direction =
-        serde_json::from_value(serde_json::Value::String(direction)).map_err(|_| "调整方向无效")?;
-    let webview: &tauri::Webview = window.as_ref();
-    if webview
-        .window()
-        .start_resize_dragging(native_direction)
-        .is_err()
-    {
-        app.state::<Windows>().finish_resize(&app, generation);
-        return Err("无法开始调整浮窗大小".into());
-    }
-    // Windows consumes pointer-up in its non-client resize loop. Poll the physical button
-    // only for this active gesture; stale tasks cannot finish a newer gesture.
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        loop {
-            if !app.state::<Windows>().resize_active(generation) {
-                break;
-            }
-            if !left_button_down() {
-                app.state::<Windows>().finish_resize(&app, generation);
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    on_ui(app, move |app| {
+        check_update_install(&app)?;
+        if !app.state::<Windows>().native.ready() {
+            return Err("浮窗移动监听不可用".into());
         }
-    });
-    Ok(())
-}
-
-#[cfg(windows)]
-fn left_button_down() -> bool {
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-    // This reads current state and never synthesizes input or intercepts the user's mouse.
-    unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON)) < 0 }
-}
-#[cfg(not(windows))]
-fn left_button_down() -> bool {
-    false
+        let generation = app.state::<Windows>().begin_resize(&app, &direction)?;
+        let native_direction = serde_json::from_value(serde_json::Value::String(direction))
+            .map_err(|_| "调整方向无效")?;
+        let webview: &tauri::Webview = window.as_ref();
+        if webview
+            .window()
+            .start_resize_dragging(native_direction)
+            .is_err()
+        {
+            app.state::<Windows>().finish_gesture(&app, generation);
+            return Err("无法开始调整浮窗大小".into());
+        }
+        check_gesture_start(app, generation);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn reset_float_size(app: AppHandle) -> Result<(), String> {
-    app.state::<Windows>().reset(&app)
+    on_ui(app, move |app| {
+        check_update_install(&app)?;
+        app.state::<Windows>().reset(&app)
+    })
+    .await
+}
+fn check_update_install(app: &AppHandle) -> Result<(), String> {
+    if app
+        .try_state::<crate::updates::Updates>()
+        .is_some_and(|updates| updates.is_installing())
+    {
+        return Err("正在准备安装更新，请稍后调整浮窗。".into());
+    }
+    Ok(())
+}
+pub async fn actual_topmost(app: AppHandle) -> Result<bool, String> {
+    on_ui(app, |app| {
+        let window = app.get_webview_window("float").ok_or("浮窗不可用")?;
+        native::topmost(&window)
+    })
+    .await
+}
+pub async fn apply_topmost(app: AppHandle, value: bool) -> Result<(), String> {
+    on_ui(app, move |app| {
+        set_always_on_top(app.clone(), value)?;
+        let window = app.get_webview_window("float").ok_or("浮窗不可用")?;
+        if native::topmost(&window)? != value {
+            return Err("浮窗置顶状态未能更新".into());
+        }
+        Ok(())
+    })
+    .await
 }
 pub fn set_always_on_top(app: AppHandle, value: bool) -> Result<(), String> {
     app.get_webview_window("float")
         .ok_or("浮窗不可用")?
         .set_always_on_top(value)
         .map_err(|_| "无法设置置顶".into())
+}
+
+pub fn handle_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+    if window.label() != "float" {
+        return;
+    }
+    match event {
+        tauri::WindowEvent::CloseRequested { api, .. } => {
+            api.prevent_close();
+            let _ = window.hide();
+        }
+        tauri::WindowEvent::Moved(_) => window
+            .app_handle()
+            .state::<Windows>()
+            .on_moved(window.app_handle()),
+        tauri::WindowEvent::Resized(size) => window
+            .app_handle()
+            .state::<Windows>()
+            .on_resized(window.app_handle(), *size),
+        tauri::WindowEvent::ScaleFactorChanged { .. } => window
+            .app_handle()
+            .state::<Windows>()
+            .on_scale_changed(window.app_handle()),
+        _ => {}
+    }
 }

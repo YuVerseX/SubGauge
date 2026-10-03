@@ -40,7 +40,7 @@ const checks = [];
           window.__commands.push({cmd,args});
           if(cmd==='bootstrap')return state;
           if(cmd==='set_float_layout')return window.__resizeProbe(args);
-          if(cmd==='save_settings'){state.settings={...args.settings};state.generation++;return state;}
+          if(cmd==='patch_settings'){state.settings={...state.settings,...args.patch};state.generation++;return state;}
           if(cmd==='reset_float_size'){const size=await window.__resetProbe();window.__TAURI_INTERNALS__.invoke('plugin:event|emit',{event:'subgauge:float-size',payload:size});return null;}
           if(cmd==='query_records')return {accountId:accounts[0].id,generation:1,range:'today',items:[state.snapshot.latest],total:1,page:1,pageSize:20,complete:true};
           if(cmd==='analysis')return {accountId:accounts[0].id,generation:1,range:'today',start:state.snapshot.start,end:state.snapshot.end,timezone:'Asia/Shanghai',syncedAt:state.snapshot.end,trend:[{name:'08:00',totals},{name:'09:00',totals:{...totals,cost:'25.00'}},{name:'10:00',totals:{...totals,cost:'37.80'}}],models:[{name:'gpt-6.1-sol',totals}],keys:[{name:'工作电脑',totals}],complete:true};

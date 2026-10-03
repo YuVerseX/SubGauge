@@ -19,6 +19,7 @@ Windows 桌面 Sub2API 个人用量悬浮窗。平时只显示关心的数字，
 - 账号独立保存指标、顺序、默认范围、时区和最近窗口时长。
 - 拖动定位、拖边调整大小、置顶、隐藏到托盘、详情最小化；浅色、深色和跟随系统主题。
 - TOTP 流程、会话恢复、用户范围 DPAPI 加密；真实连接失败保留同步状态，不显示模拟数字。
+- 安装版内置更新：每日检查、确认下载、验签后安装并重启；免安装版提示下载 ZIP。
 
 最近 7 天为连续 168 小时，余额始终是当前快照；不额外计算套餐结转，也不合计不同站点的费用。统计完整性与实现上限见 [验证记录](docs/validation.md)。
 
@@ -28,9 +29,9 @@ Windows 桌面 Sub2API 个人用量悬浮窗。平时只显示关心的数字，
 
 **下载 0.1.6 预览版：** [安装版](https://github.com/YuVerseX/SubGauge/releases/download/v0.1.6/SubGauge_0.1.6_x64-setup.exe) · [免安装 ZIP](https://github.com/YuVerseX/SubGauge/releases/download/v0.1.6/SubGauge-0.1.6-windows-x64.zip) · [发布说明与 SHA256](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.6)。
 
-运行需要 WebView2 Runtime。安装版缺少运行时时会联网下载，免安装版需自行准备。当前分发未签名。
+运行需要 WebView2 Runtime。安装版缺少运行时时会联网下载，免安装版需自行准备。Windows 安装器没有 Authenticode 证书签名；0.1.8 候选更新包另有用于内置验签的 Minisign 签名。
 
-当前源码和公开版本为 **0.1.6**，变更与分发信息见 [发布说明](docs/releases/0.1.6.md)。已完成的桌面验收基线为 **0.1.5 / Windows 10 x64 / 150% 显示缩放**；0.1.6 已通过自动回归和打包检查，尚未重做安装升级与原生桌面验收。Windows 11、其他实际系统 DPI、多屏、启用验证码或 TOTP 的真实部署及长期内存稳定性尚未全部验证。
+当前源码为 **0.1.8 候选版**，包含 0.1.7 的置顶和跨屏改进，见 [候选说明](docs/releases/0.1.8.md)；公开下载仍为 **0.1.6**。更新清单尚未公开，旧版第一次升级仍需手动安装。已完成的用户桌面操作验收基线为 **0.1.5 / Windows 10 x64 / 150% 显示缩放**。候选版检查范围见 [验证记录](docs/validation.md)；实际双屏、Windows 11、其他系统 DPI、真实验证码或 TOTP 部署及长期内存稳定性仍待验证。
 
 ## 从源码运行
 
@@ -42,11 +43,12 @@ npm run desktop
 ```
 
 ```powershell
-# 类型、布局与详情、Rust 格式、严格 Clippy 与业务回归
+# 类型、布局、详情、更新、Rust 格式、严格 Clippy 与业务回归
 npm run verify
 # 先构建安装包，再生成免安装 ZIP 和 SHA256
 npm run package
 npm run package:portable
+npm run package:update-manifest
 ```
 
 浏览器设计预览：`npm run dev` 后访问 `http://127.0.0.1:1420/?demo=1`。它只使用示例数据，不接收真实登录。
@@ -61,6 +63,8 @@ npm run package:portable
 | [开发文档](docs/development.md) | 环境、检查与打包 |
 | [验证记录](docs/validation.md) | 已通过、已知限制和未执行项 |
 | [验收清单](docs/acceptance-plan.md) | 各类修改的验证条件 |
+| [0.1.7 窗口方案](docs/plans/0.1.7-window-controls.md) | 置顶快捷入口与多屏拖动，候选版验收范围 |
+| [0.1.8 更新方案](docs/plans/0.1.8-in-app-updates.md) | 确认更新、签名、安装准备及发布渠道 |
 | [发布流程](docs/releasing.md) | 公开仓库及二进制发布流程 |
 | [变更记录](CHANGELOG.md) | 版本行为变化 |
 

@@ -8,6 +8,8 @@
 
 0.1.6 的产品说明、变更、附件名称和验证范围见 [发布说明](releases/0.1.6.md)。本地构建产物保留在 Git 忽略的 `release/`，后续版本公开二进制前按下文核对对应验收和第三方声明。
 
+当前准备 0.1.8 候选版，包含 0.1.7 窗口改进和内置更新。源码检查、候选包与隔离测试完成情况见 [验证记录](validation.md)。尚未提交公开版本或部署更新清单，不覆盖既有 0.1.6 附件。
+
 ## 源码维护
 
 当前项目已重新初始化为独立的 `main` 历史，旧 Git 备份位于项目目录外；旧导出包和临时验证产物已清理。后续直接从当前项目目录连接 GitHub，不需要额外导出源码包。
@@ -21,7 +23,7 @@
 ## 二进制候选版本
 
 1. 对齐 npm、Cargo、Tauri 版本与变更说明，运行 `npm ci`、`npm run verify`。
-2. 运行 `npm run package`，随后 `npm run package:portable`。核对 EXE、安装器的内部版本、ZIP 内容及 SHA256。
+2. 运行 `npm run package`，随后 `npm run package:portable`、`npm run package:update-manifest`。核对 EXE、安装器的内部版本、ZIP 内容、更新签名及 SHA256。
 3. 按 [验收清单](acceptance-plan.md) 验证受本次修改影响的桌面、同步和升级行为，将结果写入 [验证记录](validation.md)。生成安装包本身不代表安装或升级通过。
 4. 核对许可证、所分发第三方依赖声明、使用说明及截图。公开材料仅使用示例账号；不上传原始站点报告或用户配置。
 
@@ -37,7 +39,7 @@
 
 ## 软件发布方式
 
-软件使用 GitHub Releases 分发，源码留在 `main`。首次软件版本标记为 pre-release，上传四个明确附件：安装包、免安装 ZIP，以及各自的 `.sha256`。两种包都应包含使用说明与三份法律声明，GitHub 自动生成的 Source code ZIP 不等于可直接运行的软件。
+软件使用 GitHub Releases 分发，源码留在 `main`。0.1.6 预览版有四个附件；0.1.8 起有六个：安装包、对应 `.sig`、免安装 ZIP，以及三者的 `.sha256`。两种包都应包含使用说明与三份法律声明，GitHub 自动生成的 Source code ZIP 不等于可直接运行的软件。
 
 先对完成本地构建的准确提交创建草稿，核对附件名称、下载后 Hash、Release 目标提交和实际 CI 结果，再公开发布。不要通过推送到 `main` 自动发布，也不要把之后变动的分支头误作为已有二进制的来源。
 
@@ -58,3 +60,20 @@ gh release edit v0.1.6 --repo YuVerseX/SubGauge --draft=false --prerelease=true 
 ```
 
 操作依据：[GitHub 管理 Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)、[GitHub CLI release create](https://cli.github.com/manual/gh_release_create)、[Tauri Windows 分发](https://v2.tauri.app/distribute/windows-installer/)。
+
+## 0.1.8 签名与更新渠道
+
+更新采用 [Tauri updater](https://v2.tauri.app/plugin/updater/) 的 Minisign 格式，独立于 Windows Authenticode 证书签名。正式公钥固定在源码，私钥仅存仓库外；初始化、构建及备份边界见 [开发文档](development.md)。已有公钥时不得静默生成替代身份，否则已安装客户端无法验证后续更新。
+
+普通 CI 不持有正式私钥，使用临时身份构建 `validation-only` 产物；这些产物不能上传为正式 Release，也不能用作更新渠道。正式包由维护者身份构建，`package` 和清单工具验证签名、可信版本与内部产品版本。不要将生成签名时的私钥、密码或完整命令输出上传到日志。
+
+预览渠道固定为 `https://raw.githubusercontent.com/YuVerseX/SubGauge/main/updates/preview.json`，不依赖排除 pre-release 的 Latest。`npm run package:update-manifest` 只生成 `release/update-preview.json` 待审文件，不修改活跃渠道。
+
+发布顺序：
+
+1. 完成候选检查，固定确切源码提交，以正式身份构建六个附件和待发布清单。
+2. 对 `v0.1.8` 创建 pre-release 草稿，上传六个附件；核对源码提交、下载文件、Hash、签名和公告版本后公开。
+3. 附件已公开可下载后，再将核对过的清单复制为 `updates/preview.json`，单独提交并推送。不得先上线指向草稿、缺失或未经验证附件的清单。
+4. 从客户端核对公共检查、下载与安装流程；记录真实 SubGauge 升级结果。公共渠道未测试前不写通过。
+
+0.1.6 的首次升级仍手动安装。安装器启动后的故障不保证自动回滚，发布页保留手动安装方式。候选清单中的 URL 是预期公开地址，生成成功不代表这些地址已经可访问。关闭自动检查或 GitHub 无法连接时，仍可从 Releases 手动下载。

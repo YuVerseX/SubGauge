@@ -14,7 +14,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 pub use types::*;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -97,12 +97,105 @@ struct State {
     runtime: HashMap<String, Arc<Runtime>>,
     pending: HashMap<String, Pending>,
     generation: u64,
+    actual_topmost: Option<bool>,
 }
 pub struct Engine {
     path: PathBuf,
     api: Api,
     state: Mutex<State>,
     disk: Mutex<()>,
+    settings_update: AsyncMutex<()>,
+}
+/// Holds only the settings serializer while a caller applies native window effects.
+/// Keep this value alive until any native rollback has also finished.
+pub struct SettingsUpdate<'a> {
+    engine: &'a Engine,
+    _guard: AsyncMutexGuard<'a, ()>,
+    previous: AppSettings,
+    next: AppSettings,
+    committed: bool,
+}
+impl SettingsUpdate<'_> {
+    #[cfg(test)]
+    pub fn previous(&self) -> &AppSettings {
+        &self.previous
+    }
+    pub fn next(&self) -> &AppSettings {
+        &self.next
+    }
+    pub async fn commit(&mut self) -> Result<Bootstrap, String> {
+        if self.committed {
+            return Err("设置事务已完成。".into());
+        }
+        self.engine.commit_settings(&self.previous, &self.next)?;
+        self.committed = true;
+        Ok(self.engine.bootstrap().await)
+    }
+    /// Report the actual HWND state if native rollback fails, without making a
+    /// background account save persist an operation already reported as failed.
+    pub fn reflect_actual_topmost(&mut self, value: bool) {
+        let mut state = self.engine.state.lock().unwrap();
+        state.actual_topmost = Some(value);
+        state.generation += 1;
+    }
+}
+fn live_settings(state: &State) -> AppSettings {
+    let mut settings = state.config.settings.clone();
+    if let Some(value) = state.actual_topmost {
+        settings.always_on_top = value;
+    }
+    settings
+}
+fn storage_config(mut config: Config) -> Config {
+    config.accounts.retain(|a| !a.summary.demo);
+    if !config
+        .accounts
+        .iter()
+        .any(|a| Some(&a.summary.id) == config.current.as_ref())
+    {
+        config.current = config.accounts.first().map(|a| a.summary.id.clone());
+    }
+    config
+}
+fn merged_settings(
+    current: &AppSettings,
+    patch: &AppSettingsPatch,
+    expected: Option<&AppSettingsPatch>,
+) -> Result<AppSettings, String> {
+    let mut next = current.clone();
+    macro_rules! merge {
+        ($field:ident, $name:literal) => {
+            if let Some(value) = patch.$field {
+                if let Some(expected) = expected {
+                    let baseline = expected.$field.ok_or(concat!(
+                        "缺少“", $name, "”的原值，请重新读取设置。"
+                    ))?;
+                    if current.$field != baseline {
+                        return Err(concat!(
+                            "“", $name, "”已在其他入口修改，请重新确认后保存。"
+                        )
+                        .into());
+                    }
+                }
+                next.$field = value;
+            }
+        };
+    }
+    merge!(theme, "主题");
+    merge!(opacity, "透明度");
+    merge!(always_on_top, "浮窗置顶");
+    merge!(recent_refresh_seconds, "最近记录刷新间隔");
+    merge!(summary_refresh_seconds, "用量刷新间隔");
+    merge!(background_refresh_seconds, "后台账号刷新间隔");
+    if !next.opacity.is_finite()
+        || !(0.2..=1.0).contains(&next.opacity)
+        || !(5..=3600).contains(&next.recent_refresh_seconds)
+        || !(10..=3600).contains(&next.summary_refresh_seconds)
+        || !(30..=86400).contains(&next.background_refresh_seconds)
+    {
+        return Err("设置超出允许范围。".into());
+    }
+    Ok(next)
 }
 impl Engine {
     pub fn new(data_dir: PathBuf) -> Result<Self, String> {
@@ -149,23 +242,20 @@ impl Engine {
                 runtime,
                 pending: HashMap::new(),
                 generation: 0,
+                actual_topmost: None,
             }),
             disk: Mutex::new(()),
+            settings_update: AsyncMutex::new(()),
         })
     }
     fn persist(&self) -> Result<(), String> {
         let _disk = self.disk.lock().unwrap();
-        let mut config = self.state.lock().unwrap().config.clone();
-        config.accounts.retain(|a| !a.summary.demo);
-        if !config
-            .accounts
-            .iter()
-            .any(|a| Some(&a.summary.id) == config.current.as_ref())
-        {
-            config.current = config.accounts.first().map(|a| a.summary.id.clone());
-        }
+        let config = storage_config(self.state.lock().unwrap().config.clone());
         let bytes = serde_json::to_vec_pretty(&config).map_err(|_| "配置编码失败")?;
         storage::atomic_write(&self.path, &bytes)
+    }
+    pub fn save_before_update(&self) -> Result<(), String> {
+        self.persist()
     }
     fn context(&self, id: &str) -> Result<(AccountSummary, Arc<Runtime>), String> {
         let state = self.state.lock().unwrap();
@@ -206,7 +296,7 @@ impl Engine {
                 .collect(),
             current_account_id: s.config.current.clone(),
             selected_range,
-            settings: s.config.settings.clone(),
+            settings: live_settings(&s),
             snapshot,
             generation: s.generation,
         }
@@ -428,18 +518,49 @@ impl Engine {
         self.persist()?;
         Ok(self.bootstrap().await)
     }
+    #[cfg(test)]
     pub async fn save_settings(&self, settings: AppSettings) -> Result<Bootstrap, String> {
-        if !settings.opacity.is_finite()
-            || !(0.2..=1.0).contains(&settings.opacity)
-            || !(5..=3600).contains(&settings.recent_refresh_seconds)
-            || !(10..=3600).contains(&settings.summary_refresh_seconds)
-            || !(30..=86400).contains(&settings.background_refresh_seconds)
-        {
-            return Err("设置超出允许范围。".into());
+        self.begin_settings_update(settings.into(), None)
+            .await?
+            .commit()
+            .await
+    }
+    pub async fn begin_settings_update(
+        &self,
+        patch: AppSettingsPatch,
+        expected: Option<AppSettingsPatch>,
+    ) -> Result<SettingsUpdate<'_>, String> {
+        let guard = self.settings_update.lock().await;
+        let previous = live_settings(&self.state.lock().unwrap());
+        let next = merged_settings(&previous, &patch, expected.as_ref())?;
+        Ok(SettingsUpdate {
+            engine: self,
+            _guard: guard,
+            previous,
+            next,
+            committed: false,
+        })
+    }
+    fn commit_settings(&self, previous: &AppSettings, next: &AppSettings) -> Result<(), String> {
+        // Match persist's disk -> state order, but expose no uncommitted settings.
+        // No core or disk lock is held while a caller waits for the UI thread.
+        let _disk = self.disk.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        if &live_settings(&state) != previous {
+            return Err("应用设置已变更，请重新确认后保存。".into());
         }
-        self.state.lock().unwrap().config.settings = settings;
-        self.persist()?;
-        Ok(self.bootstrap().await)
+        if previous == next && state.actual_topmost.is_none() {
+            return Ok(());
+        }
+        let mut config = state.config.clone();
+        config.settings = next.clone();
+        let bytes =
+            serde_json::to_vec_pretty(&storage_config(config)).map_err(|_| "配置编码失败")?;
+        storage::atomic_write(&self.path, &bytes)?;
+        state.config.settings = next.clone();
+        state.actual_topmost = None;
+        state.generation += 1;
+        Ok(())
     }
     pub async fn remove_account(&self, id: String) -> Result<Bootstrap, String> {
         let (_, expected) = self.context(&id)?;

@@ -44,7 +44,7 @@ pub enum AppearanceTheme {
     System,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     pub theme: AppearanceTheme,
@@ -63,6 +63,28 @@ impl Default for AppSettings {
             recent_refresh_seconds: 10,
             summary_refresh_seconds: 30,
             background_refresh_seconds: 120,
+        }
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct AppSettingsPatch {
+    pub theme: Option<AppearanceTheme>,
+    pub opacity: Option<f64>,
+    pub always_on_top: Option<bool>,
+    pub recent_refresh_seconds: Option<u64>,
+    pub summary_refresh_seconds: Option<u64>,
+    pub background_refresh_seconds: Option<u64>,
+}
+impl From<AppSettings> for AppSettingsPatch {
+    fn from(settings: AppSettings) -> Self {
+        Self {
+            theme: Some(settings.theme),
+            opacity: Some(settings.opacity),
+            always_on_top: Some(settings.always_on_top),
+            recent_refresh_seconds: Some(settings.recent_refresh_seconds),
+            summary_refresh_seconds: Some(settings.summary_refresh_seconds),
+            background_refresh_seconds: Some(settings.background_refresh_seconds),
         }
     }
 }

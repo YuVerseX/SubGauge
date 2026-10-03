@@ -72,7 +72,7 @@ fn temporary_menu_position_is_never_saved() {
 }
 
 #[test]
-fn dragging_an_expanded_card_retains_the_pre_expansion_position() {
+fn dragging_an_expanded_card_reanchors_the_compact_card() {
     let compact = card(800, 200);
     let dragged = Rect {
         x: 400,
@@ -81,9 +81,425 @@ fn dragging_an_expanded_card_retains_the_pre_expansion_position() {
     };
     let mut layout = Layout::default();
     layout.transition(compact, true, false);
-    assert_eq!(layout.saved_rect(Some(dragged)), Some(compact));
-    assert_eq!(layout.transition(dragged, false, false), Some(compact));
+    layout.movement = Some(ManualMove {
+        generation: 1,
+        start: card(600, 400),
+        scale: 1.0,
+        origin: None,
+    });
+    layout.record_move(dragged, 1.5);
+    layout.movement = None;
+    let moved_compact = Rect {
+        x: 400,
+        y: 300,
+        width: 474,
+        height: 300,
+    };
+    assert_eq!(layout.saved_rect(Some(dragged)), Some(moved_compact));
+    assert_eq!(
+        layout.transition(dragged, false, false),
+        Some(moved_compact)
+    );
     assert_eq!(layout.saved_rect(Some(dragged)), Some(dragged));
+}
+
+fn screen(x: i32, y: i32, width: u32, height: u32, scale: f64) -> Screen {
+    Screen {
+        bounds: Rect {
+            x,
+            y,
+            width,
+            height,
+        },
+        work: Rect {
+            x,
+            y,
+            width,
+            height: height - 40,
+        },
+        scale,
+    }
+}
+
+#[test]
+fn slow_drag_can_cross_a_shared_monitor_edge_before_final_clamping() {
+    let monitors = [
+        screen(0, 0, 1920, 1080, 1.0),
+        screen(1920, 0, 1920, 1080, 1.0),
+    ];
+    let mut layout = Layout::default();
+    let mut current = Rect {
+        x: 1604,
+        y: 100,
+        width: 316,
+        height: 240,
+    };
+    layout.movement = Some(ManualMove {
+        generation: 1,
+        start: current,
+        scale: 1.0,
+        origin: Some(monitors[0].bounds),
+    });
+    for _ in 0..50 {
+        current.x += 8;
+        let (next, restore) = layout.plan(current, layout.dpi_request()).unwrap();
+        assert!(restore.is_none());
+        assert!(next.active());
+        layout = next;
+    }
+    let target = select_screen(&monitors, current, None, Some(monitors[0].bounds)).unwrap();
+    assert_eq!(target.bounds.x, 1920);
+    assert_eq!(current.clamped(target.work).x, 2004);
+}
+
+#[test]
+fn monitor_ties_use_pointer_then_origin_and_stable_coordinates() {
+    let monitors = [
+        screen(0, 0, 1920, 1080, 1.0),
+        screen(1920, 0, 1920, 1080, 1.5),
+    ];
+    let seam = Rect {
+        x: 1762,
+        y: 100,
+        width: 316,
+        height: 240,
+    };
+    assert_eq!(
+        select_screen(&monitors, seam, Some((1920, 200)), Some(monitors[0].bounds))
+            .unwrap()
+            .scale,
+        1.5
+    );
+    assert_eq!(
+        select_screen(&monitors, seam, None, Some(monitors[1].bounds))
+            .unwrap()
+            .scale,
+        1.5
+    );
+    assert_eq!(
+        select_screen(&monitors, seam, None, None).unwrap().scale,
+        1.0
+    );
+    assert_eq!(
+        select_screen(&[monitors[1], monitors[0]], seam, None, None)
+            .unwrap()
+            .scale,
+        1.0
+    );
+}
+
+#[test]
+fn negative_coordinates_layout_gaps_and_disconnected_screens_use_real_monitors() {
+    let monitors = [
+        screen(0, 0, 1920, 1080, 1.0),
+        screen(-1080, -1920, 1080, 1920, 1.5),
+    ];
+    let gap = Rect {
+        x: 300,
+        y: -500,
+        width: 316,
+        height: 240,
+    };
+    let target = select_screen(&monitors, gap, None, None).unwrap();
+    assert_eq!(target.bounds.x, 0);
+    assert_eq!(gap.clamped(target.work).y, 0);
+    let removed = Rect {
+        x: -900,
+        y: -1500,
+        ..gap
+    };
+    assert_eq!(
+        select_screen(&monitors, removed, None, None)
+            .unwrap()
+            .bounds
+            .x,
+        -1080
+    );
+    let remaining = &monitors[..1];
+    assert_eq!(
+        removed
+            .clamped(select_screen(remaining, removed, None, None).unwrap().work)
+            .x,
+        0
+    );
+    assert!(select_screen(&[], removed, None, None).is_none());
+}
+
+#[test]
+fn zero_movement_and_returning_to_the_start_keep_the_original_compact_anchor() {
+    let compact = card(800, 200);
+    let expanded = card(600, 400);
+    let mut layout = Layout::default();
+    layout.transition(compact, true, false);
+    layout.movement = Some(ManualMove {
+        generation: 1,
+        start: expanded,
+        scale: 1.0,
+        origin: None,
+    });
+    layout.record_move(expanded, 2.0);
+    assert_eq!(layout.collapsed, Some(compact));
+    assert!(!layout.relocate_collapsed);
+}
+
+#[test]
+fn moving_defers_the_latest_layout_and_dpi_does_not_restore_an_older_mode() {
+    let mut layout = Layout {
+        movement: Some(ManualMove {
+            generation: 1,
+            start: card(100, 240),
+            scale: 1.0,
+            origin: None,
+        }),
+        ..Default::default()
+    };
+    let stale = layout.dpi_request();
+    let (next, restore) = layout
+        .plan(
+            card(100, 240),
+            LayoutRequest {
+                height: 600.0,
+                min_height: 350.0,
+                expanded: true,
+                menu_open: false,
+                expected_generation: None,
+            },
+        )
+        .unwrap();
+    layout = next;
+    assert!(restore.is_none());
+    assert!(!layout.expanded);
+    assert!(layout.dpi_request().expanded);
+    assert_eq!(layout.pending_layout.unwrap().height, 600.0);
+    assert!(layout.plan(card(100, 240), stale).is_none());
+    assert_eq!(layout.config.compact, ModeSize::default());
+}
+
+#[test]
+fn native_lifecycle_ends_once_and_old_completion_cannot_end_the_next_gesture() {
+    let control = native::Control::default();
+    control.begin(1);
+    assert!(control.pending(1));
+    control.entered();
+    assert!(!control.pending(1));
+    assert_eq!(control.request_end(), Some(1));
+    assert_eq!(control.request_end(), None);
+    control.finish(1);
+    assert!(!control.active());
+    control.begin(2);
+    control.finish(1);
+    assert!(control.active());
+    assert_eq!(control.request_end(), Some(2));
+    control.finish(2);
+    assert!(!control.active());
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires a Windows desktop with WebView2; runs an isolated hidden window"]
+fn native_window_smoke() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SendMessageW, HTRIGHT, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE,
+    };
+    let directory =
+        std::env::temp_dir().join(format!("subgauge-window-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let result = Arc::new(Mutex::new(None::<String>));
+    let control = Arc::new(Mutex::new(None::<Arc<native::Control>>));
+    let control_setup = control.clone();
+    let result_setup = result.clone();
+    let test_directory = directory.clone();
+    let mut context = tauri::generate_context!();
+    context.config_mut().app.windows.clear();
+    context.config_mut().identifier =
+        format!("app.subgauge.test.{}", uuid::Uuid::new_v4().simple());
+    let application = tauri::Builder::default()
+        .any_thread()
+        .on_window_event(handle_event)
+        .setup(move |app| {
+            app.manage(Windows::new(test_directory.join("window.json")));
+            let window = WebviewWindowBuilder::new(
+                app,
+                "float",
+                WebviewUrl::External("about:blank".parse().unwrap()),
+            )
+            .decorations(false)
+            .transparent(true)
+            .shadow(false)
+            .visible(false)
+            .inner_size(316.0, 240.0)
+            .data_directory(test_directory.join("webview"))
+            .build()?;
+            let service = app.state::<Windows>();
+            service
+                .install_native_hook(app.handle())
+                .map_err(std::io::Error::other)?;
+            *control_setup.lock().unwrap() = Some(service.native.clone());
+            service
+                .layout(app.handle(), 240.0, Some(100.0), false, false)
+                .map_err(std::io::Error::other)?;
+            service
+                .layout(app.handle(), 480.0, Some(300.0), true, false)
+                .map_err(std::io::Error::other)?;
+            set_always_on_top(app.handle().clone(), true).map_err(std::io::Error::other)?;
+            assert!(native::topmost(&window).unwrap());
+            set_always_on_top(app.handle().clone(), false).map_err(std::io::Error::other)?;
+            assert!(!native::topmost(&window).unwrap());
+            let generation = service
+                .begin_move(app.handle())
+                .map_err(std::io::Error::other)?;
+            let hwnd = window.hwnd()?.0;
+            unsafe {
+                SendMessageW(hwnd, WM_ENTERSIZEMOVE, 0, 0);
+            }
+            assert!(!service.native.pending(generation));
+            let start = capture(app.handle()).unwrap();
+            let work = select_screen(&screens(&window), start, None, None)
+                .unwrap()
+                .work;
+            let moved = Rect {
+                x: work.x + 50,
+                y: work.y + 50,
+                ..start
+            };
+            window.set_position(PhysicalPosition::new(moved.x, moved.y))?;
+            // A layout notification during movement must not change actual dimensions.
+            let during = service
+                .layout(app.handle(), 500.0, Some(300.0), true, false)
+                .map_err(std::io::Error::other)?;
+            assert_eq!(
+                during.height,
+                f64::from(start.height) / window.scale_factor()?
+            );
+            unsafe {
+                SendMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+            }
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut resized = false;
+                for _ in 0..100 {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    let handle_task = handle.clone();
+                    let result_task = result_setup.clone();
+                    let was_resized = resized;
+                    let done = on_ui(handle_task, move |app| {
+                        let service = app.state::<Windows>();
+                        if service.native.active() {
+                            return Ok((false, was_resized));
+                        }
+                        let window = app
+                            .get_webview_window("float")
+                            .ok_or("missing float window")?;
+                        if was_resized {
+                            let state = service.layout.lock().unwrap();
+                            if state.config.compact.width <= DEFAULT_WIDTH
+                                || state.config.compact.height.is_some()
+                            {
+                                return Err(
+                                    "system border resize was not persisted correctly".into()
+                                );
+                            }
+                            drop(state);
+                            *result_task.lock().unwrap() = Some("passed".into());
+                            window
+                                .destroy()
+                                .map_err(|_| "cannot destroy isolated native window")?;
+                            app.exit(0);
+                            return Ok((true, true));
+                        }
+                        let before = capture(&app).ok_or("missing expanded rectangle")?;
+                        service.layout(&app, 240.0, Some(100.0), false, false)?;
+                        let compact = capture(&app).ok_or("missing compact rectangle")?;
+                        let error = if (before.x, before.y) != (compact.x, compact.y) {
+                            Some("collapse returned to an old position".into())
+                        } else {
+                            None
+                        };
+                        if let Some(error) = error {
+                            return Err(error);
+                        }
+                        let hwnd = window.hwnd().map_err(|_| "missing HWND")?.0;
+                        // The same capture used by Wry's outer-border WM_NCLBUTTONDOWN,
+                        // without synthesizing mouse input or taking desktop capture.
+                        native::capture_system_gesture(hwnd, HTRIGHT as usize, &service.native);
+                        unsafe {
+                            SendMessageW(hwnd, WM_ENTERSIZEMOVE, 0, 0);
+                        }
+                        let size = window.inner_size().map_err(|_| "missing size")?;
+                        window
+                            .set_size(PhysicalSize::new(size.width + 30, size.height))
+                            .map_err(|_| "cannot resize test window")?;
+                        unsafe {
+                            SendMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+                        }
+                        Ok((false, true))
+                    })
+                    .await;
+                    let (done, started) = match done {
+                        Ok(done) => done,
+                        Err(error) => {
+                            *result_setup.lock().unwrap() = Some(error);
+                            handle.exit(1);
+                            return;
+                        }
+                    };
+                    resized = started;
+                    if done {
+                        return;
+                    }
+                }
+                *result_setup.lock().unwrap() = Some("native gesture did not finish".into());
+                handle.exit(1);
+            });
+            Ok(())
+        })
+        .build(context)
+        .unwrap();
+    let exit = application.run_return(|_, _| {});
+    let outcome = result.lock().unwrap().clone();
+    // The path is a unique, explicitly created test directory, never user data.
+    let mut cleanup = std::fs::remove_dir_all(&directory);
+    for _ in 0..10 {
+        if cleanup.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        cleanup = std::fs::remove_dir_all(&directory);
+    }
+    assert!(
+        cleanup.is_ok(),
+        "cannot clean isolated native test directory"
+    );
+    assert_eq!(exit, 0);
+    assert_eq!(outcome.as_deref(), Some("passed"));
+    let control = control.lock().unwrap();
+    assert!(
+        !control.as_ref().unwrap().ready(),
+        "native listener survived window destruction"
+    );
+    assert!(!control.as_ref().unwrap().active());
+}
+
+#[test]
+fn recovery_repairs_only_anchors_that_belong_to_a_disconnected_screen() {
+    let compact = Rect {
+        x: -1500,
+        y: 200,
+        ..card(200, 240)
+    };
+    let target = card(100, 480);
+    let mut layout = Layout {
+        collapsed: Some(compact),
+        menu: Some(compact),
+        pending_restore: Some(compact),
+        ..Default::default()
+    };
+    assert!(layout.repair_anchors(&[screen(0, 0, 1920, 1080, 1.0)], target));
+    assert_eq!(layout.collapsed.unwrap().x, target.x);
+    assert_eq!(layout.menu.unwrap().y, target.y);
+    let repaired = layout.collapsed;
+    assert!(!layout.repair_anchors(&[screen(0, 0, 1920, 1080, 1.0)], card(600, 480)));
+    assert_eq!(layout.collapsed, repaired);
 }
 
 #[test]

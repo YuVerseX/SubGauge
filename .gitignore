@@ -15,3 +15,4 @@ window.json.*
 *.pfx
 *.p12
 *.key
+!src-tauri/updater-public.key

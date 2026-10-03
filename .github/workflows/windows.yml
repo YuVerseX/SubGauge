@@ -36,6 +36,15 @@ jobs:
         env:
           SUBGAUGE_BROWSER_CHANNEL: chromium
         run: npm run test:details
+      - name: Update interaction regression (headless Chromium)
+        env:
+          SUBGAUGE_BROWSER_CHANNEL: chromium
+        run: npm run test:updates
+      - name: Update package signature regression
+        run: |
+          New-Item -ItemType Directory -Force -Path release/validation | Out-Null
+          npm run test:update-packages | Tee-Object -FilePath release/validation/updater-package-check.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload sample browser diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -46,6 +55,8 @@ jobs:
             release/validation/float-layout-*.png
             release/validation/theme-*.png
             release/validation/detail-regression.json
+            release/validation/updater-regression.json
+            release/validation/updater-package-check.txt
           if-no-files-found: warn
       - name: Check Rust formatting
         run: npm run fmt:rust
@@ -53,15 +64,25 @@ jobs:
         run: npm run lint:rust
       - name: Rust regression tests
         run: npm run test:rust
-      - name: Build installer
+      # Ordinary pushes and PRs never receive the production signing private key.
+      - name: Prepare isolated validation-only signing identity
+        run: node scripts/prepare-ci-signing.cjs --validation-only
+      - name: Build validation-only signed installer
         run: npm run package
-      - name: Build portable ZIP
+      - name: Build validation-only portable ZIP
         run: npm run package:portable
-      - uses: actions/upload-artifact@v4
+      - name: Validate update manifest with the temporary CI identity
+        run: node scripts/prepare-update-manifest.cjs
+      - name: Upload validation-only packages (never official releases)
+        uses: actions/upload-artifact@v4
         with:
-          name: SubGauge-windows-x64
+          name: SubGauge-windows-x64-validation-only
           path: |
             src-tauri/target/release/bundle/nsis/*.exe
+            release/*.sig
             release/*.zip
             release/*.sha256
+            release/update-preview.json
+            release/VALIDATION-ONLY.txt
           if-no-files-found: error
+          retention-days: 7

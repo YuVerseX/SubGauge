@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AccountPreferences, AccountSummary, AppSettings, Bootstrap, FloatSizeState, LoginInput, LoginResult, QueryInput, ResizeDirection, UsageAnalysis, UsagePage, UsageRange, UsageRecord, UsageSnapshot, UsageTotals } from './types'
+import type { AccountPreferences, AccountSummary, AppSettings, AppSettingsPatch, Bootstrap, FloatSizeState, LoginInput, LoginResult, QueryInput, ResizeDirection, UsageAnalysis, UsagePage, UsageRange, UsageRecord, UsageSnapshot, UsageTotals } from './types'
 import { demoApi } from './demo'
 
 export const isNative = '__TAURI_INTERNALS__' in window
@@ -36,7 +36,7 @@ export const api = {
   },
   async twoFactor(challengeId: string, code: string): Promise<LoginResult> { const r = await call<{ status: 'success' | 'twoFactor'; state?: NativeState }>('complete_2fa', { challengeId, code }); return { ...r, state: r.state ? state(r.state) : undefined } },
   async savePreferences(id: string, preferences: AccountPreferences, alias: string): Promise<Bootstrap> { return isDemo ? demoApi.savePreferences(id, preferences, alias) : state(await call<NativeState>('save_preferences', { id, preferences: { ...preferences, alias } })) },
-  async saveSettings(settings: AppSettings): Promise<Bootstrap> { return isDemo ? demoApi.saveSettings(settings) : state(await call<NativeState>('save_settings', { settings })) },
+  async patchSettings(patch: AppSettingsPatch, expected?: AppSettingsPatch): Promise<Bootstrap> { return isDemo ? demoApi.patchSettings(patch, expected) : state(await call<NativeState>('patch_settings', { patch, expected })) },
   async removeAccount(id: string): Promise<Bootstrap> { return isDemo ? demoApi.removeAccount(id) : state(await call<NativeState>('remove_account', { id })) },
   async logout(id: string): Promise<Bootstrap> { return isDemo ? demoApi.logout(id) : state(await call<NativeState>('logout', { id })) },
   async records(query: QueryInput): Promise<UsagePage> {
@@ -73,11 +73,13 @@ export const api = {
     }
   },
   async subscribe(callback: (data: Bootstrap) => void): Promise<() => void> { return isNative ? listen<NativeState>('subgauge:state', e => callback(state(e.payload))) : () => {} },
+  async subscribeSettingsError(callback: (error: string) => void): Promise<() => void> { return isNative ? listen<string>('subgauge:settings-error', e => callback(e.payload)) : () => {} },
   async navigate(callback: (page: string, accountId?: string) => void): Promise<() => void> { return isNative ? listen<{ page: string; accountId?: string }>('subgauge:navigate', e => callback(e.payload.page, e.payload.accountId)) : () => {} },
   async openDetails(target = 'overview') { const separator = target.indexOf(':'); const page = separator < 0 ? target : target.slice(0, separator); const accountId = separator < 0 ? null : target.slice(separator + 1); if (isNative) await call('open_details', { page, accountId }) },
   async showFloat() { if (isNative) await call('show_float') },
   async resize(height: number, expanded: boolean, menuOpen = false, minHeight?: number): Promise<FloatSizeState | null> { return isNative ? call<FloatSizeState>('set_float_layout', { height, minHeight, expanded, menuOpen }) : null },
   async subscribeSize(callback: (size: FloatSizeState) => void): Promise<() => void> { return isNative ? listen<FloatSizeState>('subgauge:float-size', e => callback(e.payload)) : () => {} },
   async startResize(direction: ResizeDirection) { if (isNative) await call('start_float_resize', { direction }) },
+  async startDrag() { if (isNative) await call('start_float_drag') },
   async resetSize() { if (isNative) await call('reset_float_size') },
 }

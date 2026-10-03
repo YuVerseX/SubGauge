@@ -15,6 +15,8 @@
 
 alloc-stdlib 和 webview2-com 系列的 crate 包未包含完整许可证文件，补充来自 `.cargo_vcs_info.json` 对应固定提交。selectors 的固定源码头声明 MPL-2.0，但该版本包和固定仓库根没有 LICENSE；本目录使用已锁定 cssparser 上游的完整 MPL-2.0 文本，明确区分许可证文本来源与 selectors 源码来源。
 
+0.1.8 的更新功能引入 `tauri-plugin 2.7.1`；该 crate 从 Tauri workspace 继承 `Apache-2.0 OR MIT`，发布包未附完整许可证。补充使用其 `.cargo_vcs_info.json` 对应的[官方固定提交](https://github.com/tauri-apps/tauri/tree/30da1fd6e17de6107ecc850c95dfb16b5729f2dd)根目录的 `LICENSE-MIT`、`LICENSE-APACHE-2.0` 与 `LICENSE.spdx`，分别保存为 `tauri-plugin-MIT.txt`、`tauri-plugin-APACHE-2.0.txt`、`tauri-plugin-LICENSE.spdx`。保留两份全文和 SPDX 版权元数据，不用空声明替代缺失文本；三个文件的本地 SHA256 与上游原始字节一致。
+
 Microsoft WebView2 SDK 1.0.3800.47 的 LICENSE 和 NOTICE 来自官方 NuGet 包，安装包内 x64 静态 Loader 与依赖中实际使用的库已按 SHA256 核对。生成器每次重新核对 Loader；版本或内容变化时要求重新审查。crate 的 MIT 声明不替代 Microsoft SDK 声明。
 
 Rust 标准库声明使用当前 `rustc --print sysroot` 下的 `share/doc/rust/COPYRIGHT-library.html`，生成时记录工具链和文件 SHA256，单独随包提供；不把包含 LLVM 等组件的完整编译器声明混为运行依赖。缺少该文件时停止生成，补齐相应官方工具链材料后再试。

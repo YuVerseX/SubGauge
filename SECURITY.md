@@ -4,6 +4,8 @@ SubGauge 是本地桌面客户端。密码不持久化；记住登录时，会�
 
 DPAPI 不阻止以同一 Windows 用户身份运行的其他程序访问数据，也不让免安装版凭据可跨电脑迁移。真实站点的认证策略和权限仍由站点控制。
 
+0.1.8 的内置更新使用固定发布源和随应用固定的 Minisign 公钥，完整验签并核对签名版本后才允许安装；私钥不进入仓库或普通 CI。更新签名不等同于 Windows Authenticode 证书签名，也不证明发布源代码已经接受完整安全审计。下载与安装由用户确认，安装器启动后的失败不承诺自动回滚。
+
 ## 报告安全问题
 
 公开仓库已启用 GitHub Private vulnerability reporting，请使用 [私密漏洞报告](https://github.com/YuVerseX/SubGauge/security/advisories/new)。不要在公开 Issue 中粘贴凭据、私有响应或可利用细节。本项目目前没有另行公布的安全联系邮箱，也没有服务等级承诺。

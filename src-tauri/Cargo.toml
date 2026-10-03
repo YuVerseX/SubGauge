@@ -1,6 +1,6 @@
 [package]
 name = "subgauge"
-version = "0.1.6"
+version = "0.1.8"
 description = "Sub2API personal usage desktop gauge"
 license = "MIT"
 edition = "2021"
@@ -16,6 +16,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "=2.13.1"
+base64 = "=0.22.1"
+minisign-verify = "=0.2.5"
+semver = "=1.0.28"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -27,7 +31,7 @@ rust_decimal = { version = "1", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_Memory", "Win32_Storage_FileSystem", "Win32_UI_Input_KeyboardAndMouse"] }
+windows-sys = { version = "0.61", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_Memory", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi"] }
 
 [profile.release]
 codegen-units = 1

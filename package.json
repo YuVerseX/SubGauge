@@ -1,6 +1,6 @@
 {
   "name": "subgauge",
-  "version": "0.1.6",
+  "version": "0.1.8",
   "description": "Windows desktop gauge for personal Sub2API usage",
   "license": "MIT",
   "private": true,
@@ -10,6 +10,8 @@
     "typecheck": "vue-tsc --noEmit",
     "test:layout": "node scripts/float-layout-probe.cjs",
     "test:details": "node scripts/detail-regression.cjs",
+    "test:updates": "node scripts/updater-regression.cjs",
+    "test:update-packages": "node scripts/updater-package-check.cjs",
     "notices": "node scripts/generate-notices.cjs",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview --host 127.0.0.1",
@@ -19,9 +21,10 @@
     "test:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 test",
     "fmt:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 fmt",
     "lint:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 lint",
-    "verify": "npm run build && npm run notices && npm run test:layout && npm run test:details && npm run fmt:rust && npm run lint:rust && npm run test:rust",
+    "verify": "npm run build && npm run notices && npm run test:layout && npm run test:details && npm run test:updates && npm run test:update-packages && npm run fmt:rust && npm run lint:rust && npm run test:rust",
     "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop.ps1 build",
-    "package:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1"
+    "package:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1",
+    "package:update-manifest": "node scripts/prepare-update-manifest.cjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.12.1",

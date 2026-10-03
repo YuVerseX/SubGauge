@@ -56,6 +56,7 @@ export interface AppSettings {
   summaryRefreshSeconds: number
   backgroundRefreshSeconds: number
 }
+export type AppSettingsPatch = Partial<AppSettings>
 export interface FloatSizeState { width: number; height: number; manualHeight: boolean; resizing: boolean }
 export type ResizeDirection = 'North' | 'South' | 'East' | 'West' | 'NorthEast' | 'NorthWest' | 'SouthEast' | 'SouthWest'
 export interface Bootstrap {

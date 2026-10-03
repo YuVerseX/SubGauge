@@ -1,4 +1,4 @@
-import type { AccountPreferences, AppSettings, Bootstrap, QueryInput, UsageAnalysis, UsagePage, UsageRange, UsageRecord, UsageSnapshot, UsageTotals } from './types'
+import type { AccountPreferences, AppSettings, AppSettingsPatch, Bootstrap, QueryInput, UsageAnalysis, UsagePage, UsageRange, UsageRecord, UsageSnapshot, UsageTotals } from './types'
 const blank = (): UsageTotals => ({ actualCost: 0, requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 })
 let range: UsageRange = 'today'
 const settings: AppSettings = { theme: 'light', opacity: 1, alwaysOnTop: true, recentRefreshSeconds: 10, summaryRefreshSeconds: 30, backgroundRefreshSeconds: 120 }
@@ -15,7 +15,12 @@ export const demoApi = {
   async switchAccount(id: string) { data.activeAccountId = id; range = data.accounts.find(a => a.id === id)!.preferences.defaultRange; return state() },
   async refresh(_id: string, r: UsageRange) { range = r; return state() },
   async savePreferences(id: string, preferences: AccountPreferences, alias: string) { const a = data.accounts.find(a => a.id === id)!; a.preferences = structuredClone(preferences); a.alias = alias; if (id === data.activeAccountId) range = preferences.defaultRange; return state() },
-  async saveSettings(value: AppSettings) { data.settings = { ...value }; return state() },
+  async patchSettings(patch: AppSettingsPatch, expected?: AppSettingsPatch) {
+    const fields = Object.keys(patch) as (keyof AppSettings)[]
+    if (expected && fields.some(field => expected[field] === undefined || expected[field] !== data.settings[field])) throw new Error('应用设置已在其他入口修改，请重新确认后保存。')
+    data.settings = { ...data.settings, ...patch }
+    return state()
+  },
   async removeAccount(id: string) { data.accounts = data.accounts.filter(a => a.id !== id); if (id === data.activeAccountId) data.activeAccountId = data.accounts[0]?.id || null; return state() },
   async logout(id: string) { const a = data.accounts.find(a => a.id === id); if (a) a.sessionStatus = 'needsLogin'; return state() },
   async records(query: QueryInput): Promise<UsagePage> { let list = rows(query.accountId).filter(r => (!query.model || r.model.includes(query.model)) && (!query.keyId || r.keyId === query.keyId)); if (query.range === 'recent') list = list.filter(r => +new Date(r.createdAt) >= Date.now() - (data.accounts.find(a => a.id === query.accountId)?.preferences.recentMinutes || 5) * 60000); return { accountId: query.accountId, generation: 1, total: list.length, page: query.page, pageSize: query.pageSize, items: list.slice((query.page - 1) * query.pageSize, query.page * query.pageSize), complete: true } },
