@@ -88,7 +88,7 @@ onUnmounted(() => { disposed = true; unsubscribe?.() })
 
 <template>
   <section class="desktop-panel" aria-labelledby="desktop-settings-heading" data-testid="desktop-panel">
-    <div class="section-head"><h3 id="desktop-settings-heading">启动与后台</h3><span v-if="state" class="muted">{{ distribution }}</span></div>
+    <div class="section-head"><h3 id="desktop-settings-heading">启动与快捷键</h3><span v-if="state" class="muted">{{ distribution }}</span></div>
     <p v-if="isDemo" class="muted">示例预览，不登记开机自启，不占用系统快捷键。</p>
     <p v-if="loading" class="loading-line"><LoaderCircle class="spin" :size="14"/>正在读取启动设置…</p>
     <form v-if="state" @submit.prevent="save">
