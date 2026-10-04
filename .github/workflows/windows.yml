@@ -36,6 +36,10 @@ jobs:
         env:
           SUBGAUGE_BROWSER_CHANNEL: chromium
         run: npm run test:details
+      - name: Desktop settings and freshness regression (headless Chromium)
+        env:
+          SUBGAUGE_BROWSER_CHANNEL: chromium
+        run: npm run test:desktop && npm run test:freshness
       - name: Update interaction regression (headless Chromium)
         env:
           SUBGAUGE_BROWSER_CHANNEL: chromium
@@ -55,6 +59,8 @@ jobs:
             release/validation/float-layout-*.png
             release/validation/theme-*.png
             release/validation/detail-regression.json
+            release/validation/desktop-regression.json
+            release/validation/freshness-regression.json
             release/validation/updater-regression.json
             release/validation/updater-package-check.txt
           if-no-files-found: warn

@@ -18,7 +18,7 @@ const PUBLIC_KEY: &str = include_str!("../updater-public.key");
 const MAX_DOWNLOAD: usize = 48 * 1024 * 1024;
 const CHECK_SECONDS: i64 = 24 * 60 * 60;
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Distribution {
     Installed,

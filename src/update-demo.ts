@@ -1,7 +1,7 @@
 import type { UpdatePreferencesPatch, UpdateState } from './update-types'
 
 let state: UpdateState = {
-  revision: 0, currentVersion: '0.1.8（示例）', distribution: 'development', channel: 'preview',
+  revision: 0, currentVersion: '0.1.9（示例）', distribution: 'development', channel: 'preview',
   phase: 'idle', autoCheck: false, checkedAt: null, version: null, notes: null,
   publishedAt: null, downloadedBytes: 0, totalBytes: null, error: null, skippedVersion: null,
 }

@@ -54,6 +54,8 @@ npm run typecheck
 npm run build
 npm run test:layout
 npm run test:details
+npm run test:desktop
+npm run test:freshness
 npm run test:updates
 npm run test:update-packages
 npm run notices

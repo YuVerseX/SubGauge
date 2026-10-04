@@ -173,6 +173,12 @@ unsafe extern "system" fn callback(
     // AppHandle/Arc copies and never retains this pointer.
     let hook = unsafe { &*(reference as *const Hook) };
     match message {
+        windows_sys::Win32::UI::WindowsAndMessaging::WM_HOTKEY => {
+            let hotkey_id = wparam as i32;
+            schedule(hook.app.clone(), move |app| {
+                crate::desktop::hotkey(&app, hotkey_id);
+            });
+        }
         WM_SYSCOMMAND
             if (wparam as u32 & 0xfff0) == SC_SIZE || (wparam as u32 & 0xfff0) == SC_MOVE =>
         {
@@ -239,6 +245,9 @@ unsafe extern "system" fn callback(
             }
         }
         WM_NCDESTROY => {
+            if let Some(desktop) = hook.app.try_state::<crate::desktop::Desktop>() {
+                desktop.release();
+            }
             unsafe {
                 RemoveWindowSubclass(hwnd, Some(callback), id);
             }

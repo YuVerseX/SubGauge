@@ -18,6 +18,7 @@ export interface AccountSummary {
 }
 export interface UsageTotals {
   actualCost: number
+  actualCostExact?: string
   requests: number
   inputTokens: number
   outputTokens: number
@@ -43,8 +44,10 @@ export interface UsageSnapshot {
   recent: UsageTotals | null
   latest: UsageRecord | null
   balance: number | null
+  balanceExact?: string | null
   balanceUpdatedAt: string | null
   usageUpdatedAt: string | null
+  recentUpdatedAt?: string | null
   status: string
   message?: string | null
 }

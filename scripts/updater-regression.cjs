@@ -202,7 +202,7 @@ function initialization(options = {}) {
     await demo.getByText('示例预览，不检查、下载或安装真实软件。', { exact: true }).waitFor();
     await demo.getByRole('button', { name: '检查更新', exact: true }).click();
     await demo.getByRole('status').filter({ hasText: '示例状态：当前版本已是最新' }).waitFor();
-    check('demo-explicitly-states-synthetic-version-and-never-downloads', (await demo.getByTestId('update-panel').innerText()).includes('0.1.8（示例）') && await demo.getByRole('button', { name: '下载更新', exact: true }).count() === 0 && await demo.getByRole('checkbox', { name: '自动检查更新', exact: true }).isDisabled());
+    check('demo-explicitly-states-synthetic-version-and-never-downloads', (await demo.getByTestId('update-panel').innerText()).includes('（示例）') && await demo.getByRole('button', { name: '下载更新', exact: true }).count() === 0 && await demo.getByRole('checkbox', { name: '自动检查更新', exact: true }).isDisabled());
     await demo.close();
 
     const report = { scope: `Real Vue update panel, official Tauri IPC mocks, synthetic data, isolated headless browser (${channel}); no network updater or installer runs`, passed: checks.every(item => item.passed), checks };

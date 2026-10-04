@@ -1,4 +1,5 @@
 mod core;
+mod desktop;
 mod updates;
 mod windows;
 
@@ -217,8 +218,10 @@ pub fn run() {
     let install_directory = updates::installer_directory_argument(&executable)
         .expect("Application installation path is invalid");
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            let _ = windows::show_float_impl(app);
+        .plugin(tauri_plugin_single_instance::init(|app, args, _| {
+            if !desktop::from_autostart(args) {
+                let _ = windows::show_float_impl(app);
+            }
         }))
         .plugin(
             tauri_plugin_updater::Builder::new()
@@ -241,9 +244,21 @@ pub fn run() {
                 .install_native_hook(app.handle())
                 .map_err(std::io::Error::other)?;
             app.state::<windows::Windows>().restore(app.handle());
+            let visibility = desktop::initialize(
+                app.handle(),
+                data.join("desktop.v1.json"),
+                std::env::current_exe()?,
+                updates::distribution(),
+            )
+            .map_err(std::io::Error::other)?;
             if let Some(window) = app.get_webview_window("float") {
                 window.set_always_on_top(initial.settings.always_on_top)?;
-                window.show()?;
+                if desktop::should_show(
+                    desktop::from_autostart(std::env::args().skip(1)),
+                    visibility,
+                ) {
+                    window.show()?;
+                }
             }
             let show = MenuItem::with_id(app, "show", "显示浮窗", true, None::<&str>)?;
             let detail = MenuItem::with_id(app, "details", "详细用量", true, None::<&str>)?;
@@ -389,7 +404,10 @@ pub fn run() {
             windows::set_float_layout,
             windows::start_float_drag,
             windows::start_float_resize,
-            windows::reset_float_size
+            windows::reset_float_size,
+            desktop::desktop_status,
+            desktop::save_desktop_preferences,
+            desktop::open_startup_settings
         ])
         .run(tauri::generate_context!())
         .expect("SubGauge could not start");

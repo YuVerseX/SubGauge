@@ -28,7 +28,16 @@ const reportPath = path.join(repo, 'release/validation/detail-regression.json');
       };
       window.__detailProbe={overviewQueries:[],failOverview:true,slowStarted:false,slowFinished:false,saves:0,savedAlias:null,settingsCalls:[],layoutCalls:[],drags:0,bootstraps:0};
       window.__probeState=state;
+      window.__desktopProbeState={revision:1,distribution:'installed',launchAtLogin:false,startupVisibility:'float',shortcut:null,shortcutRegistered:false,startupBlocked:null,error:null};
+      window.__detailProbe.desktopCalls=[];
       mockIPC(async (command,args) => {
+        if(command==='desktop_status')return structuredClone(window.__desktopProbeState);
+        if(command==='save_desktop_preferences'){
+          window.__detailProbe.desktopCalls.push(structuredClone(args.input));
+          Object.assign(window.__desktopProbeState,args.input.patch);
+          window.__desktopProbeState.revision++;
+          return structuredClone(window.__desktopProbeState);
+        }
         if(command==='bootstrap'){window.__detailProbe.bootstraps++;return state;}
         if(command==='query_records'){
           const q=args.query;
@@ -143,6 +152,14 @@ const reportPath = path.join(repo, 'release/validation/detail-regression.json');
     await page.getByRole('button',{name:'确认并保存',exact:true}).click();
     await page.getByText('应用设置已保存',{exact:true}).waitFor();
     checks.push({name:'reconfirmed-save-uses-refreshed-field-base',passed:await page.evaluate(()=>{const call=window.__detailProbe.settingsCalls.at(-1);return call.patch.theme==='light' && call.expected.theme==='system';})});
+    await page.getByRole('combobox',{name:'自启时显示',exact:true}).waitFor();
+    checks.push({name:'desktop-form-is-not-nested-in-appearance-form',passed:await page.locator('.desktop-panel form').evaluate(form=>form.parentElement.closest('form')===null)});
+    await page.getByRole('combobox',{name:'外观主题',exact:true}).selectOption('dark');
+    const appearanceSaves=await page.evaluate(()=>window.__detailProbe.settingsCalls.length);
+    await page.getByRole('combobox',{name:'自启时显示',exact:true}).selectOption('tray');
+    await page.getByRole('button',{name:'保存启动设置',exact:true}).click();
+    await page.getByText('启动设置已保存。',{exact:true}).waitFor();
+    checks.push({name:'desktop-save-does-not-save-pending-appearance',passed:await page.evaluate(count=>window.__detailProbe.settingsCalls.length===count && window.__probeState.settings.theme==='light' && window.__detailProbe.desktopCalls.at(-1).patch.startupVisibility==='tray',appearanceSaves) && await page.getByRole('combobox',{name:'外观主题',exact:true}).inputValue()==='dark'});
 
     const floatPage=await browser.newPage({viewport:{width:316,height:820}});
     await floatPage.addInitScript(initScript);
@@ -226,6 +243,25 @@ const reportPath = path.join(repo, 'release/validation/detail-regression.json');
     await floatPage.waitForFunction(()=>document.querySelector('.pin-toggle').getAttribute('aria-pressed')==='false');
     checks.push({name:'tray-settings-error-is-visible-and-refreshes-actual-pin-state',passed:await floatPage.evaluate(count=>window.__detailProbe.bootstraps===count+1,bootstrapsBeforeError)});
     await floatPage.close();
+    const freshnessPage=await browser.newPage({viewport:{width:316,height:820}});
+    await freshnessPage.addInitScript(initScript);
+    await freshnessPage.clock.install({time:new Date('2026-10-04T12:00:00Z')});
+    await freshnessPage.goto(`http://127.0.0.1:${server.httpServer.address().port}/`);
+    await freshnessPage.locator('.float-footer .sync-status').waitFor();
+    await freshnessPage.clock.fastForward(1000);
+    await freshnessPage.evaluate(()=>{
+      const stamp=new Date().toISOString();
+      const state=window.__probeState;
+      Object.assign(state.snapshot.sync,{state:'synced',complete:true,message:null,usageSyncedAt:stamp,balanceSyncedAt:stamp,recentSyncedAt:stamp});
+      state.settings.summaryRefreshSeconds=30;state.generation++;
+      window.__TAURI_INTERNALS__.invoke('plugin:event|emit',{event:'subgauge:state',payload:structuredClone(state)});
+    });
+    await freshnessPage.waitForFunction(()=>document.querySelector('.float-footer .sync-status')?.textContent.includes('已同步'));
+    checks.push({name:'fresh-response-updates-clock-before-next-timer-tick',passed:(await freshnessPage.locator('.float-footer .sync-status').innerText()).includes('已同步')});
+    await freshnessPage.clock.fastForward(91000);
+    await freshnessPage.waitForFunction(()=>document.querySelector('.float-footer .sync-status')?.textContent.includes('数据未更新'));
+    checks.push({name:'card-expires-without-any-new-state-response',passed:(await freshnessPage.locator('.float-footer .sync-status').innerText()).includes('数据未更新')});
+    await freshnessPage.close();
     const report = { scope: `Real Vue app, official Tauri mocks, synthetic data, isolated headless browser (${channel})`, passed: checks.every(check => check.passed), checks };
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));

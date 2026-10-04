@@ -12,6 +12,10 @@ accounts.v1.json
 accounts.v1.json.*
 window.json
 window.json.*
+desktop.v1.json
+desktop.v1.json.*
+updates.v1.json
+updates.v1.json.*
 *.pfx
 *.p12
 *.key
