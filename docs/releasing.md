@@ -10,6 +10,8 @@
 
 [v0.1.8 预览版](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.8) 已于 2026-10-03 公开，固定二进制源码为 `704fc14e526161eb408ee402c819f9e7e2077098`；该提交的 [Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37123263193) 通过。六个正式附件上传并匿名下载回查后，更新清单才以 `6a4524b` 提交上线；没有覆盖 0.1.6。证据与尚未验收项见 [验证记录](validation.md)。
 
+[v0.1.9 预览版](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.9) 已于 2026-10-04 公开，固定二进制源码为 `26d6da401aebe4143285d3aae9d7c4453ad166ae`；其 [Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37197619149) 全部通过。六个附件公开下载回查及验签通过后，更新清单以 `2e045b8` 提交上线，公共 HTTPS 清单与本地一致。本轮公共原生插件探针执行被自动审批拒绝，明确列为未执行；未替换日常安装版。
+
 ## 源码维护
 
 当前项目已重新初始化为独立的 `main` 历史，旧 Git 备份位于项目目录外；旧导出包和临时验证产物已清理。后续直接从当前项目目录连接 GitHub，不需要额外导出源码包。

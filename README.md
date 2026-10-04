@@ -18,7 +18,7 @@ Windows 桌面 Sub2API 个人用量悬浮窗。平时只显示关心的数字，
 - 精简常驻卡片，原地展开查看最近请求；详情提供趋势、记录筛选与分页、模型和 Key 分析。
 - 账号独立保存指标、顺序、默认范围、时区和最近窗口时长。
 - 拖动定位、拖边调整大小、置顶、隐藏到托盘、详情最小化；浅色、深色和跟随系统主题。
-- 0.1.9 候选版增加登录自启、托盘启动方式、可选全局快捷键和完整数值/同步时间提示，见 [候选说明](docs/releases/0.1.9.md)。
+- 登录自启、托盘启动方式、可选全局快捷键，以及完整数值和同步时间提示；自启与快捷键默认关闭。
 - TOTP 流程、会话恢复、用户范围 DPAPI 加密；真实连接失败保留同步状态，不显示模拟数字。
 - 安装版内置更新：每日检查、确认下载、验签后安装并重启；免安装版提示下载 ZIP。
 
@@ -28,11 +28,11 @@ Windows 桌面 Sub2API 个人用量悬浮窗。平时只显示关心的数字，
 
 提供 Windows x64 安装版和免安装 ZIP。安装版运行 `SubGauge_<version>_x64-setup.exe`；免安装版解压后运行 `SubGauge.exe`。两者共享当前 Windows 用户的账号与设置。操作、登录及升级说明见 [使用指南](docs/user-guide.md)。
 
-**下载 0.1.8 预览版：** [安装版](https://github.com/YuVerseX/SubGauge/releases/download/v0.1.8/SubGauge_0.1.8_x64-setup.exe) · [免安装 ZIP](https://github.com/YuVerseX/SubGauge/releases/download/v0.1.8/SubGauge-0.1.8-windows-x64.zip) · [发布说明与 SHA256](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.8)。
+**下载 0.1.9 预览版：** [安装版](https://github.com/YuVerseX/SubGauge/releases/download/v0.1.9/SubGauge_0.1.9_x64-setup.exe) · [免安装 ZIP](https://github.com/YuVerseX/SubGauge/releases/download/v0.1.9/SubGauge-0.1.9-windows-x64.zip) · [发布说明与 SHA256](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.9)。
 
-运行需要 WebView2 Runtime。安装版缺少运行时时会联网下载，免安装版需自行准备。Windows 安装器没有 Authenticode 证书签名；0.1.8 更新包另有用于内置验签的 Minisign 签名。
+运行需要 WebView2 Runtime。安装版缺少运行时时会联网下载，免安装版需自行准备。Windows 安装器没有 Authenticode 证书签名；更新包另有用于内置验签的 Minisign 签名。
 
-当前源码为 **0.1.9 候选版**；公开版本为 **0.1.8 预览版**，见 [发布说明](docs/releases/0.1.8.md)。公开预览清单仍指向 0.1.8，0.1.6 第一次升级需手动安装。0.1.8 二进制源码固定为 `704fc14`，其 [Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37123263193) 已通过；后续提交不移动已公开版本 Tag。已完成的用户桌面操作验收基线为 **0.1.5 / Windows 10 x64 / 150% 显示缩放**。实际双屏、Windows 11、其他系统 DPI、真实验证码或 TOTP 部署及长期内存稳定性仍待验证，具体范围见 [验证记录](docs/validation.md)。
+当前源码与公开版本为 **0.1.9 预览版**，见 [发布说明](docs/releases/0.1.9.md)。公开预览清单已指向 0.1.9，0.1.8 安装版可内置检查更新，旧版无更新功能时需手动安装。0.1.9 二进制源码固定为 `26d6da4`，其 [Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37197619149) 已通过；后续提交不移动已公开版本 Tag。已完成的用户桌面操作验收基线为 **0.1.5 / Windows 10 x64 / 150% 显示缩放**。新版真实登录自启、键盘操作与账号升级、实际双屏、Windows 11、其他系统 DPI、真实验证码或 TOTP 部署及长期内存稳定性仍待验证，具体范围见 [验证记录](docs/validation.md)。
 
 ## 从源码运行
 
@@ -66,6 +66,7 @@ npm run package:update-manifest
 | [验收清单](docs/acceptance-plan.md) | 各类修改的验证条件 |
 | [0.1.7 窗口方案](docs/plans/0.1.7-window-controls.md) | 置顶快捷入口与多屏拖动，候选版验收范围 |
 | [0.1.8 更新方案](docs/plans/0.1.8-in-app-updates.md) | 确认更新、签名、安装准备及发布渠道 |
+| [0.1.9 日常使用方案](docs/plans/0.1.9-desktop-convenience.md) | 登录自启、托盘启动、快捷键和同步提示 |
 | [发布流程](docs/releasing.md) | 公开仓库及二进制发布流程 |
 | [变更记录](CHANGELOG.md) | 版本行为变化 |
 

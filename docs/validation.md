@@ -1,6 +1,6 @@
 # SubGauge 验收摘要
 
-整理日期：2026-10-04；当前源码：0.1.9 候选版；公开版本：0.1.8 预览版；既有用户桌面操作验收基线：0.1.5。本页区分既有实测与当前源码检查。自动回归、隔离原生 API、用户实际操作和部署核对分别记录，不能互相替代。
+整理日期：2026-10-04；当前源码及公开版本：0.1.9 预览版；既有用户桌面操作验收基线：0.1.5。本页区分既有实测与当前源码检查。自动回归、隔离原生 API、用户实际操作和部署核对分别记录，不能互相替代。
 
 ## 0.1.9 启动与日常使用检查
 
@@ -8,18 +8,32 @@
 
 | 检查 | 已通过结果与范围 |
 | --- | --- |
-| 完整源码检查 | `npm run verify` 通过：类型、生产前端、许可证声明、202 项布局、27 项详情、38 项启动面板、47 项同步/数值提示、33 项更新交互、17 项签名回归，以及 Rustfmt、严格 Clippy、103 项 Rust 普通回归。随后补充新响应到达和提示自然过期的详情回归，最终 29 项详情及类型检查通过。另有 3 项原生冒烟明确忽略，随后均单独执行通过 |
+| 完整源码检查 | 本地 `npm run verify` 及最终补充检查通过；固定提交的 [Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37197619149) 全部通过，含类型、生产前端、许可证声明、202 项布局、29 项详情、38 项启动面板、47 项同步/数值提示、33 项更新交互、17 项签名回归，以及 Rustfmt、严格 Clippy、103 项 Rust 普通回归、验证身份安装器/ZIP 构建与清单检查。另有 3 项原生冒烟默认明确忽略，均在本地单独执行通过 |
 | 桌面业务回归 | 28 项 mock 覆盖只读状态不登记、启动来源与超长路径、版本配置保留、快捷键解析与 null patch、候选冲突、持久化回滚、外部启动项变化、旧 revision、其他目录保护，以及快捷键恢复失败不阻断无关设置 |
 | 原生注册表 | 3 项检查仅使用 `HKCU\Software\SubGaugeTests\Desktop\<GUID>`：空格/中文命令、邻近值保留、异常类型/长度拒绝。GUID 子键及测试目录均清理，未改真实 Run/StartupApproved |
 | 原生快捷键 | 两个隐藏实际 WebView2 HWND 的 13 项检查通过：跨窗口冲突、候选登记、旧组合释放、保存/恢复、错误 ID 忽略和销毁时释放。使用免安装分发及独立 fixture；没有发送真实按键、有效呼出消息或显示窗口，不能代替用户键盘体验 |
 | 既有原生行为 | 本版隐藏 `native_window_smoke` 和 `native_updater_smoke` 均执行通过，分别覆盖既有窗口手势/置顶和签名更新准备/恢复，不触碰日常账号 |
 | NSIS 卸载 hook | 当前生产 hook 经独立静默 fixture 8/8 检查通过：自有带引号/空格/中文及 ASCII 大小写命令删除，其他目录/参数/未加引号保留，`/UPDATE` 保留，缺值无错。每项确认邻居值及工作变量恢复，仅替换为独立测试注册表路径；不是主应用真实安装升级 |
+| 最终分发 | 对应固定源码 `26d6da401aebe4143285d3aae9d7c4453ad166ae`；Release、签名安装器和 ZIP 构建通过。程序、安装器及解出 EXE 均为 0.1.9；ZIP 五文件及安装器四份资源匹配来源，安装/免安装 EXE 仅三个分发标记字节不同，三份 SHA256、签名与清单双平台入口核对通过 |
+| 草稿附件 | 六个附件下载回查通过，实际字节、尺寸与 GitHub digest 均匹配本地候选；下载后的安装器签名与版本验证通过。尚未将草稿地址用于在线更新 |
+| 公开附件与清单 | 2026-10-04 公开 [v0.1.9](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.9)；六个附件匿名下载后的 Hash、尺寸、服务器摘要与本地一致，更新签名和签名绑定版本通过。随后 `2e045b8` 上线预览清单，固定公共 HTTPS 地址完整内容与本地清单一致 |
+| 公共原生插件 | 无窗口 0.1.8 探针已为 0.1.9 构建，使用官方 updater 2.13.1、固定公钥和正常版本比较器；执行被自动审批拒绝，原因仅为 `blocked by policy`。未执行，未重试绕过；不以 0.1.8 历史成功或 Node 验签替代本轮原生结果 |
 
 回归发现并修复：快捷键重启冲突会阻断无关启动设置、超长自启路径会中断整个应用启动、路径大小写导致卸载遗漏，以及新设置表单嵌套导致提交传播。关键分支已保留回归；纯文案未增加永久测试。
 
-本地证据位于忽略目录 `release/validation/`：`verify-0.1.9.log`、`desktop-regression.json`、`freshness-regression.json`、`detail-regression.json`、`native-desktop-smoke-0.1.9.json`、`native-window-0.1.9.log`、`native-updater-0.1.9.log` 和 `desktop-hook-probe/report.json`。首轮原生 fixture 因 WebView2 短时锁留下目录；删除该目录及两份 NSIS fixture EXE 的自动审批被拒，原因仅为 `blocked by policy`，未重试绕过，准确手动清理命令保存在本地忽略目录。
+最终公开附件如下；不复用此前构建的 Hash，不覆盖旧公开版本：
 
-未替换日常安装版、未开启用户真实启动项或快捷键。实际 Windows 登录自启、真实键盘显示隐藏、主应用更新安装、手动先卸载再安装、双屏/混合 DPI/热插拔、Windows 11 及新版长期资源仍待实测。发布渠道在附件及远端 CI 核对完成前仍保持 0.1.8。
+| 文件 | Bytes | SHA256 |
+| --- | ---: | --- |
+| `SubGauge_0.1.9_x64-setup.exe` | 3,066,010 | `48d57d1e6da055c5f29f33adb0c2013e78d8010f7aabe7469c7c096df39e9272` |
+| `SubGauge_0.1.9_x64-setup.exe.sig` | 436 | `ba02ad5481fc94fa69f7f46fd645696df6f284b370eb98fd2bd8221fa87eabc2` |
+| `SubGauge-0.1.9-windows-x64.zip` | 4,139,470 | `01342d1f742170dfc6c90fa0d48b68e8afa56ea11fce56eb53cd9764a01ed719` |
+
+本地证据位于忽略目录 `release/validation/`：`verify-0.1.9.log`、`desktop-regression.json`、`freshness-regression.json`、`detail-regression.json`、`native-desktop-smoke-0.1.9.json`、`native-window-0.1.9.log`、`native-updater-0.1.9.log` 和 `desktop-hook-probe/report.json`。首轮原生 fixture 因 WebView2 短时锁留下目录；删除该目录、两份 NSIS fixture EXE 及两份临时分发/下载检查脚本的自动审批被拒，原因仅为 `blocked by policy`，未重试绕过，准确手动清理命令保存在本地忽略目录。
+
+分发与发布证据另见本地忽略目录的 `package-source-26d6da4.log`、`distribution-0.1.9.json`、`github-draft-0.1.9.json`、`github-public-0.1.9.json`、`public-feed-0.1.9.json` 和 `ci-0.1.9.log`。
+
+未替换日常安装版、未开启用户真实启动项或快捷键。实际 Windows 登录自启、真实键盘显示隐藏、主应用更新安装、手动先卸载再安装、双屏/混合 DPI/热插拔、Windows 11 及新版长期资源仍待实测。0.1.9 公共原生插件探针明确未执行，公开下载与清单核对已通过。
 
 ## 0.1.8 更新与现有窗口检查
 
