@@ -1,15 +1,15 @@
 {
-  "version": "0.1.9",
-  "notes": "新增登录 Windows 后自启，可选择显示浮窗或仅进入托盘；自启和全局快捷键默认关闭，在应用设置中开启。支持自定义显示/隐藏浮窗快捷键，冲突或保存失败保留旧设置。同步状态提供独立更新时间和过期提示，指标悬停显示完整费用、Token 构成及缓存率。内置升级保留原目录、用户数据与启动登记；真实登录自启、键盘操作和双屏等实测范围见发布说明。",
-  "pub_date": "2026-10-04T11:22:22Z",
+  "version": "0.1.10",
+  "notes": "打磨浮窗、趋势、请求筛选与设置体验：用量、余额和最近窗口独立显示同步状态；最近窗口待补齐不再影响今日完整汇总。最近请求显示相对时间，小额非零费用保留更多精度。趋势按时间排列，模型与 Key 支持搜索选择，分析按费用排序并可直接查看对应请求。优化浅深色对比、间距和保存反馈。",
+  "pub_date": "2026-10-08T08:06:49Z",
   "platforms": {
     "windows-x86_64-nsis": {
-      "url": "https://github.com/YuVerseX/SubGauge/releases/download/v0.1.9/SubGauge_0.1.9_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSeFloaXlGM3Z0U1F1eS9rM0NsajVNTnBOSjZiWHBFMjZMMU5nak0zclk1andUWE1MOU5mL0YwQ09kVzJrRUxQMmJiNndnMFNYRVlKRnFjU1N6WW0wK2ljSnU4QkRsWGdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMTEyNDg2CWZpbGU6U3ViR2F1Z2VfMC4xLjlfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMS45CnNaMnRBSktDekl2ZkxrVHRGVnRrTnJhOFBtYnkydTB4ZENmVFl6UitERnMrRmZEaHR0bFRIQldLMk13MzRSYzlkMU54b3VvdzVFQUlVcXpvK2hQMUF3PT0K"
+      "url": "https://github.com/YuVerseX/SubGauge/releases/download/v0.1.10/SubGauge_0.1.10_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSeFloaXlGM3Z0U2NieDFuODJqeGJ2cVRtOHFFcUZUWHBPdjcraHJOUXdiUERjNEFhWCtJZlRXWHZ5YlZYSjQ5K2lVbzVkODUzWWVKNnB1M1hUdElUdXBUSUh1cEJGL3dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNDM4MzEyCWZpbGU6U3ViR2F1Z2VfMC4xLjEwX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjEuMTAKcUVCcW8yWGFyZHZJQzF0ZHF4VVJtRTF0T3hibm93L2NLaVdmbk9FL25qR0JQcnVtLzRyTVM0SGl1L0FQZHRCRFpMWVk5RWQxUi9rNG9CWnBqM3NtRFE9PQo="
     },
     "windows-x86_64": {
-      "url": "https://github.com/YuVerseX/SubGauge/releases/download/v0.1.9/SubGauge_0.1.9_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSeFloaXlGM3Z0U1F1eS9rM0NsajVNTnBOSjZiWHBFMjZMMU5nak0zclk1andUWE1MOU5mL0YwQ09kVzJrRUxQMmJiNndnMFNYRVlKRnFjU1N6WW0wK2ljSnU4QkRsWGdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMTEyNDg2CWZpbGU6U3ViR2F1Z2VfMC4xLjlfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMS45CnNaMnRBSktDekl2ZkxrVHRGVnRrTnJhOFBtYnkydTB4ZENmVFl6UitERnMrRmZEaHR0bFRIQldLMk13MzRSYzlkMU54b3VvdzVFQUlVcXpvK2hQMUF3PT0K"
+      "url": "https://github.com/YuVerseX/SubGauge/releases/download/v0.1.10/SubGauge_0.1.10_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSeFloaXlGM3Z0U2NieDFuODJqeGJ2cVRtOHFFcUZUWHBPdjcraHJOUXdiUERjNEFhWCtJZlRXWHZ5YlZYSjQ5K2lVbzVkODUzWWVKNnB1M1hUdElUdXBUSUh1cEJGL3dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNDM4MzEyCWZpbGU6U3ViR2F1Z2VfMC4xLjEwX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjEuMTAKcUVCcW8yWGFyZHZJQzF0ZHF4VVJtRTF0T3hibm93L2NLaVdmbk9FL25qR0JQcnVtLzRyTVM0SGl1L0FQZHRCRFpMWVk5RWQxUi9rNG9CWnBqM3NtRFE9PQo="
     }
   }
 }
