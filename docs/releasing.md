@@ -12,6 +12,8 @@
 
 [v0.1.9 预览版](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.9) 已于 2026-10-04 公开，固定二进制源码为 `26d6da401aebe4143285d3aae9d7c4453ad166ae`；其 [Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37197619149) 全部通过。六个附件公开下载回查及验签通过后，更新清单以 `2e045b8` 提交上线，公共 HTTPS 清单与本地一致。本轮公共原生插件探针执行被自动审批拒绝，明确列为未执行；未替换日常安装版。
 
+[v0.1.10 预览版](https://github.com/YuVerseX/SubGauge/releases/tag/v0.1.10) 已于 2026-10-08 公开，固定二进制源码为 `0e3562840de15decdc47470fd46b331c129095a1`；其 [Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37745922155) 全部通过。六个正式附件从草稿及公共地址回查一致，生产更新签名验证通过；清单以 `63e93fd` 提交上线，固定公共 HTTPS 地址完整内容与本地一致。用户现有安装程序文件与 0.1.10 发布包一致，本轮未执行安装升级或公共原生插件探针，详见 [验证记录](validation.md)。
+
 ## 源码维护
 
 当前项目已重新初始化为独立的 `main` 历史，旧 Git 备份位于项目目录外；旧导出包和临时验证产物已清理。后续直接从当前项目目录连接 GitHub，不需要额外导出源码包。
@@ -80,4 +82,4 @@ gh release edit v0.1.6 --repo YuVerseX/SubGauge --draft=false --prerelease=true 
 
 0.1.6 的首次升级仍手动安装。安装器启动后的故障不保证自动回滚，发布页保留手动安装方式。候选清单中的 URL 是预期公开地址，生成成功不代表这些地址已经可访问。关闭自动检查或 GitHub 无法连接时，仍可从 Releases 手动下载。
 
-本次清单及后续纯发布文档提交使用 `[skip ci]`，二进制源码的完整 CI 已在固定提交通过；清单另经公共 HTTPS 与原生插件验证，不重复构建相同代码。这不表示发布文档是原二进制源码，也不改变已有 Tag。跳过方式依据 [GitHub 官方文档](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs)，不能用于未经检查的代码修改。
+二进制源码的完整 CI 在固定提交通过后，清单及后续纯发布文档提交可使用 `[skip ci]`，不重复构建相同代码。清单仍须单独核对公共 HTTPS 内容与附件签名；原生插件及实际安装结果按各版本的验证记录说明，未执行项不能记为通过。这不表示发布文档是原二进制源码，也不改变已有 Tag。跳过方式依据 [GitHub 官方文档](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs)，不能用于未经检查的代码修改。
