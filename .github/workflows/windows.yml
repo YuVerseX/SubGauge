@@ -44,6 +44,10 @@ jobs:
         env:
           SUBGAUGE_BROWSER_CHANNEL: chromium
         run: npm run test:updates
+      - name: Usage interaction and accuracy regression (headless Chromium)
+        env:
+          SUBGAUGE_BROWSER_CHANNEL: chromium
+        run: npm run test:polish
       - name: Update package signature regression
         run: |
           New-Item -ItemType Directory -Force -Path release/validation | Out-Null
@@ -61,6 +65,7 @@ jobs:
             release/validation/detail-regression.json
             release/validation/desktop-regression.json
             release/validation/freshness-regression.json
+            release/validation/polish-regression.json
             release/validation/updater-regression.json
             release/validation/updater-package-check.txt
           if-no-files-found: warn

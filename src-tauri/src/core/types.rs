@@ -126,6 +126,38 @@ pub struct UsageRecord {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DataSyncStatus {
+    pub state: String,
+    pub message: Option<String>,
+    pub synced_at: Option<String>,
+    pub complete: bool,
+}
+impl Default for DataSyncStatus {
+    fn default() -> Self {
+        Self {
+            state: "loading".into(),
+            message: None,
+            synced_at: None,
+            complete: false,
+        }
+    }
+}
+impl DataSyncStatus {
+    pub fn received(complete: bool, message: Option<String>) -> Self {
+        Self {
+            state: if complete { "synced" } else { "incomplete" }.into(),
+            message,
+            synced_at: Some(chrono::Utc::now().to_rfc3339()),
+            complete,
+        }
+    }
+    pub fn unavailable(&mut self, state: &str, message: &str) {
+        self.state = state.into();
+        self.message = Some(message.into());
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncStatus {
     pub state: String,
     pub message: Option<String>,
@@ -133,6 +165,14 @@ pub struct SyncStatus {
     pub balance_synced_at: Option<String>,
     pub recent_synced_at: Option<String>,
     pub complete: bool,
+    #[serde(default)]
+    pub usage: DataSyncStatus,
+    #[serde(default)]
+    pub balance: DataSyncStatus,
+    #[serde(default)]
+    pub recent: DataSyncStatus,
+    #[serde(default)]
+    pub latest: DataSyncStatus,
 }
 impl Default for SyncStatus {
     fn default() -> Self {
@@ -143,6 +183,52 @@ impl Default for SyncStatus {
             balance_synced_at: None,
             recent_synced_at: None,
             complete: false,
+            usage: DataSyncStatus::default(),
+            balance: DataSyncStatus::default(),
+            recent: DataSyncStatus::default(),
+            latest: DataSyncStatus::default(),
+        }
+    }
+}
+impl SyncStatus {
+    pub fn unavailable(&mut self, state: &str, message: &str) {
+        for part in [
+            &mut self.usage,
+            &mut self.balance,
+            &mut self.recent,
+            &mut self.latest,
+        ] {
+            part.unavailable(state, message);
+        }
+        self.state = state.into();
+        self.message = Some(message.into());
+    }
+    pub fn update_overall(&mut self) {
+        self.complete = self.usage.complete;
+        self.usage_synced_at = self.usage.synced_at.clone();
+        self.balance_synced_at = self.balance.synced_at.clone();
+        self.recent_synced_at = self.recent.synced_at.clone();
+        let parts = [
+            ("当前范围", &self.usage),
+            ("余额", &self.balance),
+            ("最近窗口", &self.recent),
+            ("最近一笔", &self.latest),
+        ];
+        if let Some((_, part)) = parts.iter().find(|(_, part)| part.state == "needsLogin") {
+            self.state = "needsLogin".into();
+            self.message = part.message.clone();
+        } else if self.usage.state != "synced" {
+            self.state = self.usage.state.clone();
+            self.message = self.usage.message.clone();
+        } else if let Some((label, part)) = parts.iter().find(|(_, part)| part.state != "synced") {
+            self.state = "partial".into();
+            self.message = Some(format!(
+                "{label}：{}",
+                part.message.as_deref().unwrap_or("等待同步。")
+            ));
+        } else {
+            self.state = "synced".into();
+            self.message = None;
         }
     }
 }
@@ -242,6 +328,19 @@ pub struct AnalysisQuery {
 pub struct AnalysisRow {
     pub name: String,
     pub totals: Totals,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bucket_start: Option<String>,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrendMetadata {
+    pub source: String,
+    pub granularity: String,
+    pub timezone: Option<String>,
+    pub missing_buckets: String,
+    pub complete: bool,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -253,9 +352,40 @@ pub struct AnalysisResult {
     pub end: String,
     pub timezone: String,
     pub trend: Vec<AnalysisRow>,
+    pub trend_meta: TrendMetadata,
     pub models: Vec<AnalysisRow>,
     pub keys: Vec<AnalysisRow>,
     pub complete: bool,
+    pub message: Option<String>,
+    pub synced_at: String,
+}
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterOptionsQuery {
+    pub account_id: String,
+    pub range: UsageRange,
+    #[serde(default)]
+    pub force: bool,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyOption {
+    pub id: i64,
+    pub name: String,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterOptions {
+    pub account_id: String,
+    pub generation: u64,
+    pub range: UsageRange,
+    pub start: String,
+    pub end: String,
+    pub timezone: String,
+    pub models: Vec<String>,
+    pub keys: Vec<KeyOption>,
+    pub models_complete: bool,
+    pub keys_complete: bool,
     pub message: Option<String>,
     pub synced_at: String,
 }

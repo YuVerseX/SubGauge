@@ -28,6 +28,8 @@ Rust 最低声明依据锁定依赖的 MSRV；本机实测版本为 1.99.0，不
 
 原生职责细分见 [implementation-plan.md](implementation-plan.md)。0.1.8 加入内置更新，自动检查但下载与安装需用户确认；不保存全量历史数据库或远端同步。
 
+0.1.10 的分项同步、趋势与筛选契约见 [体验打磨方案](plans/0.1.10-experience-polish.md)。`npm run test:polish` 覆盖候选初始化/过期/跨账号迟到、搜索键盘操作、分析跳转、极小费用、分项状态及 DST 时间轴；使用官方 Tauri mock 与匿名示例，纳入 `npm run verify` 和 Windows CI。真实站点数据仅可用于本机只读检查，不加入测试夹具或分发截图。
+
 ## 启动与预览
 
 ```powershell

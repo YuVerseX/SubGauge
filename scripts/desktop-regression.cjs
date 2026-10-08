@@ -166,7 +166,7 @@ function initialization(options = {}) {
     await page.getByText(/Windows 已禁用 SubGauge 自启/).waitFor();
     check('windows-disabled-startup-is-not-shown-as-enabled', await page.getByText(/此处保存不会覆盖系统的禁用选择/).count() === 1);
     await page.evaluate(() => window.__desktopProbe.publish({ startupBlocked: null }));
-    await page.getByText(/未能确认 Windows 中的禁用状态/).waitFor();
+    await page.getByRole('status').filter({ hasText: /Windows 中的禁用状态未确认/ }).waitFor();
     check('unknown-windows-startup-status-is-explicit', await page.getByText(/Windows 已禁用 SubGauge 自启/).count() === 0);
     await page.getByRole('button', { name: 'Windows 启动应用设置', exact: true }).click();
     check('windows-startup-settings-opens-only-fixed-native-command', await page.evaluate(() => { const calls = window.__desktopProbe.calls.filter(call => call.command === 'open_startup_settings'); return calls.length === 1 && JSON.stringify(calls[0].args) === '{}'; }));

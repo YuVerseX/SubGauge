@@ -1,5 +1,5 @@
 use super::types::*;
-use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 use rust_decimal::Decimal;
 use serde_json::Value;
@@ -36,6 +36,24 @@ pub fn bounds(
         UsageRange::Recent => now - Duration::minutes(i64::from(minutes)),
     };
     Ok((start, now))
+}
+pub fn trend_bucket(
+    time: DateTime<Utc>,
+    range: UsageRange,
+    tz: Tz,
+) -> Result<DateTime<Utc>, String> {
+    let local = time.with_timezone(&tz);
+    // Elapsed subtraction preserves both occurrences of a repeated local hour.
+    // Calendar-day buckets still use the actual local midnight (23/25-hour days).
+    match range {
+        UsageRange::Recent => Ok(time
+            - Duration::seconds(i64::from(local.second()))
+            - Duration::nanoseconds(i64::from(local.nanosecond()))),
+        UsageRange::Today => Ok(time
+            - Duration::seconds(i64::from(local.minute() * 60 + local.second()))
+            - Duration::nanoseconds(i64::from(local.nanosecond()))),
+        _ => midnight(local.date_naive(), tz),
+    }
 }
 pub fn decimal(v: &Value) -> Result<Decimal, String> {
     let text = if let Some(s) = v.as_str() {
@@ -192,6 +210,24 @@ mod tests {
         assert_eq!(t.total_tokens, 1200);
         assert_eq!(t.cache_rate, Some(910.0 / 1100.0));
         assert_eq!(Totals::zero().cache_rate, None);
+    }
+    #[test]
+    fn trend_buckets_keep_repeated_dst_hours_and_calendar_midnights() {
+        let tz = "America/New_York".parse().unwrap();
+        let first = DateTime::parse_from_rfc3339("2026-11-01T01:35:42-04:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let second = DateTime::parse_from_rfc3339("2026-11-01T01:35:42-05:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let before = trend_bucket(first, UsageRange::Today, tz).unwrap();
+        let after = trend_bucket(second, UsageRange::Today, tz).unwrap();
+        assert_eq!((after - before).num_hours(), 1);
+        assert_eq!(before.with_timezone(&tz).hour(), 1);
+        assert_eq!(after.with_timezone(&tz).hour(), 1);
+        let day = trend_bucket(first, UsageRange::Week, tz).unwrap();
+        let next_day = trend_bucket(second + Duration::days(1), UsageRange::Week, tz).unwrap();
+        assert_eq!((next_day - day).num_hours(), 25);
     }
     #[test]
     fn unsupported_fields_fail_closed() {

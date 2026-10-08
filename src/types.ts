@@ -50,7 +50,14 @@ export interface UsageSnapshot {
   recentUpdatedAt?: string | null
   status: string
   message?: string | null
+  sync?: {
+    usage: SyncPart
+    balance: SyncPart
+    recent: SyncPart
+    latest?: SyncPart
+  }
 }
+export interface SyncPart { state: string; message: string | null; syncedAt: string | null; complete: boolean }
 export interface AppSettings {
   theme: 'light' | 'dark' | 'system'
   opacity: number
@@ -71,7 +78,29 @@ export interface Bootstrap {
   snapshot: UsageSnapshot | null
 }
 export interface UsagePage { accountId: string; generation: number; range?: UsageRange; start?: string; end?: string; timezone?: string; items: UsageRecord[]; total: number; page: number; pageSize: number; complete: boolean; message?: string | null }
-export interface UsageBreakdown extends UsageTotals { name: string }
+export interface UsageBreakdown extends UsageTotals { name: string; keyId?: number }
+export interface TrendPoint { label: string; actualCost: number; bucketStart?: string }
+export interface TrendMeta {
+  source: 'server' | 'records'
+  granularity: 'hour' | 'day' | 'minute'
+  timezone: string | null
+  missingBuckets: 'unknown' | 'zero'
+  complete: boolean
+}
+export interface FilterOptions {
+  accountId: string
+  generation: number
+  range: UsageRange
+  start: string
+  end: string
+  timezone: string
+  models: string[]
+  keys: { id: number; name: string }[]
+  modelsComplete: boolean
+  keysComplete: boolean
+  message?: string | null
+  syncedAt: string
+}
 export interface UsageAnalysis {
   accountId: string
   generation: number
@@ -80,7 +109,8 @@ export interface UsageAnalysis {
   end: string
   timezone: string
   syncedAt: string
-  trend: { label: string; actualCost: number }[]
+  trend: TrendPoint[]
+  trendMeta?: TrendMeta
   models: UsageBreakdown[]
   keys: UsageBreakdown[]
   complete: boolean

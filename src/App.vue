@@ -3,13 +3,14 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { ArrowDown, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronUp, ChevronsLeft, ChevronsRight, CircleHelp, GripHorizontal, LoaderCircle, Minus, Pin, PinOff, Plus, RefreshCw, Settings2, UsersRound, Wallet, X } from '@lucide/vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { api, isDemo, isNative } from './api'
-import type { AccountPreferences, AccountSummary, AppSettings, AppSettingsPatch, Bootstrap, FloatSizeState, Metric, ResizeDirection, UsageAnalysis, UsagePage, UsageRange } from './types'
-import { cache, compact, host, labels, money, ranges, timestamp, tokens } from './format'
+import type { AccountPreferences, AccountSummary, AppSettings, AppSettingsPatch, Bootstrap, FilterOptions, FloatSizeState, Metric, ResizeDirection, UsageAnalysis, UsageBreakdown, UsagePage, UsageRange } from './types'
+import { cache, compact, host, labels, money, ranges, relativeTime, timestamp, tokens } from './format'
 import Metrics from './components/Metrics.vue'
 import UsageTable from './components/UsageTable.vue'
 import UsageChart from './components/UsageChart.vue'
 import UpdatePanel from './components/UpdatePanel.vue'
 import DesktopPanel from './components/DesktopPanel.vue'
+import FilterSelect from './components/FilterSelect.vue'
 import { syncPresentation } from './freshness'
 
 type Page = 'overview' | 'records' | 'analysis' | 'accounts' | 'preferences' | 'settings' | 'login'
@@ -25,11 +26,24 @@ const timezone = computed(() => snapshot.value?.timezone || account.value?.prefe
 const range = computed(() => data.value?.range || 'today')
 const rangeLabel = computed(() => range.value === 'recent' ? `近 ${account.value?.preferences.recentMinutes || 5} 分钟` : ranges[range.value])
 const freshnessNow = ref(Date.now())
-const syncState = computed(() => syncPresentation(snapshot.value, data.value?.settings || { summaryRefreshSeconds: 30, recentRefreshSeconds: 10 }, details.value ? ['cost', 'requests', 'tokens', 'cache', 'balance'] : account.value?.preferences.metrics || [], freshnessNow.value, timezone.value))
+const syncState = computed(() => syncPresentation(snapshot.value, data.value?.settings || { summaryRefreshSeconds: 30, recentRefreshSeconds: 10 }, details.value ? ['cost', 'requests', 'tokens', 'cache', 'balance'] : account.value?.preferences.metrics || [], freshnessNow.value, timezone.value, details.value ? page.value === 'overview' : expanded.value))
 const stateLabel = computed(() => syncState.value.label)
 const good = computed(() => syncState.value.good)
 const recordData = ref<UsagePage | null>(null), analysis = ref<UsageAnalysis | null>(null), detailLoading = ref(false), detailError = ref('')
 const recordPage = ref(1), modelFilter = ref(''), keyFilter = ref(''), appliedModel = ref(''), appliedKey = ref('')
+const filterOptions = ref<FilterOptions | null>(null), optionsLoading = ref(false), optionsError = ref('')
+const linkedKey = ref<{ value: string; label: string } | null>(null)
+const modelOptions = computed(() => (filterOptions.value?.models || []).map(name => ({ value: name, label: name })))
+const keyOptions = computed(() => {
+  const options = (filterOptions.value?.keys || []).map(item => ({ value: String(item.id), label: item.name, description: '#' + item.id }))
+  if (linkedKey.value && !options.some(item => item.value === linkedKey.value!.value)) options.push({ ...linkedKey.value, description: '#' + linkedKey.value.value })
+  return options
+})
+const filtersApplied = computed(() => !!appliedModel.value || !!appliedKey.value)
+const analysisGroups = computed(() => [
+  { kind: 'model' as const, title: '模型消耗', items: [...(analysis.value?.models || [])].sort((a, b) => b.actualCost - a.actualCost || a.name.localeCompare(b.name)) },
+  { kind: 'key' as const, title: 'Key 消耗', items: [...(analysis.value?.keys || [])].sort((a, b) => b.actualCost - a.actualCost || a.name.localeCompare(b.name)) },
+])
 const totalPages = computed(() => Math.max(1, Math.ceil((recordData.value?.total || 0) / 20)))
 const prefId = ref(''), prefAlias = ref(''), pref = reactive<AccountPreferences>({ defaultRange: 'today', metrics: ['cost', 'requests', 'tokens', 'cache'], recentMinutes: 5, timezone: 'Asia/Shanghai' })
 const fieldOrder = ref<Metric[]>(['cost', 'requests', 'tokens', 'cache', 'balance'])
@@ -50,6 +64,7 @@ const resizeDirections: ResizeDirection[] = ['North', 'South', 'East', 'West', '
 const form = reactive({ siteUrl: '', email: '', password: '', alias: '', remember: true, code: '' })
 const challenge = ref(''), confirmRemove = ref<string | null>(null)
 let unlisten: (() => void)[] = [], observer: ResizeObserver | undefined, freshnessTimer: ReturnType<typeof setInterval> | undefined, requestId = 0, resizeTimer: ReturnType<typeof setTimeout> | undefined, loadingKey = '', lastLayout = '', layoutInFlight = false, layoutPending = false, disposed = false, layoutTask: Promise<void> | undefined
+let optionsRequestId = 0, optionsKey = ''
 
 function setSetting<K extends keyof AppSettings>(target: AppSettings, field: K, value: AppSettings[K]) { target[field] = value }
 function editSettings() { if (!data.value) return; Object.assign(settings, data.value.settings); Object.assign(settingsBase, data.value.settings); settingsConflicts.value = []; settingsConfirming.value = false }
@@ -151,6 +166,8 @@ async function logout(a: AccountSummary) { await run(async () => { accept(await 
 async function loadDetail(force = false) {
   if (!details.value || !account.value || !['overview', 'records', 'analysis'].includes(page.value)) return
   const key = [account.value.id, range.value, page.value, recordPage.value, appliedKey.value, appliedModel.value, account.value.preferences.timezone, account.value.preferences.recentMinutes].join('|')
+  // Candidate requests have their own generation and may be invalidated during bootstrap.
+  if (page.value === 'records') void loadFilterOptions(force)
   if (detailLoading.value && loadingKey === key && !force) return
   loadingKey = key
   const id = ++requestId, a = account.value.id, r = range.value, tab = page.value
@@ -163,14 +180,43 @@ async function loadDetail(force = false) {
     const results = await Promise.allSettled(jobs); const failure = results.find(r => r.status === 'rejected'); if (failure?.status === 'rejected') throw failure.reason
   } catch (e) { if (id === requestId) detailError.value = message(e) } finally { if (id === requestId) detailLoading.value = false }
 }
-async function applyFilters() { appliedModel.value = modelFilter.value.trim(); appliedKey.value = keyFilter.value.trim(); recordPage.value = 1; await loadDetail() }
+async function loadFilterOptions(force = false) {
+  if (!account.value || !details.value) return
+  const a = account.value.id, r = range.value, key = [a, r, account.value.preferences.timezone, account.value.preferences.recentMinutes].join('|')
+  const age = filterOptions.value ? Date.now() - Date.parse(filterOptions.value.syncedAt) : Infinity
+  const cached = filterOptions.value?.modelsComplete && filterOptions.value.keysComplete && age >= 0 && age < 300_000
+  if (optionsKey === key && (optionsLoading.value || cached) && !force) return
+  optionsKey = key
+  const id = ++optionsRequestId
+  optionsLoading.value = true; optionsError.value = ''
+  try {
+    const result = await api.filterOptions(a, r, force)
+    if (id === optionsRequestId && account.value?.id === a && range.value === r) {
+      if (!result || result.accountId !== a || result.range !== r) throw new Error('候选项暂不可用，可以输入模型名称或 Key ID。')
+      filterOptions.value = result
+    }
+  } catch (e) { if (id === optionsRequestId) optionsError.value = message(e) }
+  finally { if (id === optionsRequestId) optionsLoading.value = false }
+}
+async function applyFilters() {
+  const key = keyFilter.value.trim()
+  if (key && (!/^\d+$/.test(key) || !Number.isSafeInteger(Number(key)) || Number(key) <= 0)) { detailError.value = '请选择 Key，或输入有效的数字 ID。'; return }
+  appliedModel.value = modelFilter.value.trim(); appliedKey.value = key; recordPage.value = 1; await loadDetail()
+}
+async function openAnalysisRecords(kind: 'model' | 'key', item: UsageBreakdown) {
+  if (kind === 'key' && item.keyId == null) return
+  modelFilter.value = appliedModel.value = kind === 'model' ? item.name : ''
+  keyFilter.value = appliedKey.value = kind === 'key' ? String(item.keyId) : ''
+  linkedKey.value = kind === 'key' ? { value: String(item.keyId), label: item.name } : null
+  recordPage.value = 1; page.value = 'records'; await nextTick(); await loadDetail()
+}
 async function paginate(delta: number) { recordPage.value = Math.max(1, Math.min(totalPages.value, recordPage.value + delta)); await loadDetail() }
 async function restartRecords() { recordPage.value = 1; await loadDetail() }
 function relativeWidth(cost: number, items: { actualCost: number }[]) { const max = Math.max(...items.map(i => i.actualCost), .000001); return cost / max * 100 + '%' }
 function navigate(target: string, id?: string) { const separator = target.indexOf(':'); const next = separator < 0 ? target : target.slice(0, separator); const inlineId = separator < 0 ? '' : target.slice(separator + 1); page.value = (['overview','records','analysis','accounts','preferences','settings','login'].includes(next) ? next : 'overview') as Page; const targetAccount = data.value?.accounts.find(a => a.id === (id || inlineId)); if (page.value === 'preferences') editPreferences(targetAccount || account.value); if (page.value === 'settings') editSettings(); if (page.value === 'login') clearLogin(targetAccount); loadDetail() }
 function dismiss(e: PointerEvent) { if (picker.value && !pickerElement.value?.contains(e.target as Node)) picker.value = false }
 function escape(e: KeyboardEvent) { if (e.key === 'Escape') { picker.value = false; confirmRemove.value = null } }
-watch([() => account.value?.id, range, () => account.value?.preferences.timezone, () => account.value?.preferences.recentMinutes], () => { recordPage.value = 1; recordData.value = null; analysis.value = null; appliedModel.value = ''; appliedKey.value = ''; modelFilter.value = ''; keyFilter.value = ''; loadDetail() })
+watch([() => account.value?.id, range, () => account.value?.preferences.timezone, () => account.value?.preferences.recentMinutes], () => { optionsRequestId++; optionsKey = ''; filterOptions.value = null; optionsLoading.value = false; optionsError.value = ''; linkedKey.value = null; recordPage.value = 1; recordData.value = null; analysis.value = null; appliedModel.value = ''; appliedKey.value = ''; modelFilter.value = ''; keyFilter.value = ''; loadDetail() })
 watch(page, (next, previous) => { notice.value = ''; error.value = ''; if (previous === 'login' && next !== 'login') { form.password = ''; form.code = ''; challenge.value = '' } if (next === 'records') recordData.value = null; loadDetail() })
 watch([picker, expanded, details], () => { document.documentElement.classList.toggle('native-float', isNative && !details.value); nextTick(resize) })
 watch(data, () => nextTick(resize))
@@ -252,45 +298,64 @@ onUnmounted(() => { disposed = true; unlisten.forEach(f => f()); observer?.disco
       <div v-if="loading" class="empty-state"><LoaderCircle class="spin" :size="22"/><p>正在加载 SubGauge…</p></div>
       <template v-else-if="!details">
         <template v-if="account"><Metrics :fields="account.preferences.metrics" :totals="snapshot?.totals || null" :balance="snapshot?.balance ?? null" :balance-exact="snapshot?.balanceExact"/>
-          <div v-if="error || pinError || snapshot?.message" class="compact-error" role="status">{{ error || pinError || snapshot?.message }}</div>
+          <div v-if="error || pinError" class="compact-error" role="status">{{ error || pinError }}</div>
           <footer class="float-footer"><button class="sync-status" :title="syncState.title" :disabled="busy" @click="refresh"><span :class="['status-dot', { good }]"/><span>{{ busy ? '同步中' : stateLabel }}</span><RefreshCw :size="11" :class="{ spin: busy }"/></button><div class="float-actions"><button class="icon-button pin-toggle" :aria-label="pinLabel" :title="pinLabel" :aria-pressed="pinned" :aria-busy="pinBusy" :disabled="pinBusy || !data" @click="togglePin"><LoaderCircle v-if="pinBusy" class="spin" :size="14"/><Pin v-else-if="pinned" :size="14"/><PinOff v-else :size="14"/></button><button class="button quiet" :aria-expanded="expanded" @click="expanded = !expanded">{{ expanded ? '收起' : '展开' }}<ChevronUp v-if="expanded" :size="13"/><ChevronDown v-else :size="13"/></button></div></footer>
-          <section v-if="expanded" class="float-expanded"><div class="section-head"><h3>最近一笔</h3><span class="muted">{{ snapshot?.latest ? timestamp(snapshot.latest.createdAt, timezone) : '—' }}</span></div><template v-if="snapshot?.latest"><div class="latest-line"><span>{{ snapshot.latest.model }}</span><strong>{{ money(snapshot.latest.actualCost, 4) }}</strong></div><p class="muted">{{ compact(tokens(snapshot.latest)) }} Token · 缓存率 {{ cache(snapshot.latest) }}</p></template><p v-else class="muted">暂无已记录的请求</p><template v-if="range !== 'recent'"><h3>近 {{ account.preferences.recentMinutes }} 分钟</h3><p class="recent-line">{{ money(snapshot?.recent?.actualCost) }}<span>·</span>{{ snapshot?.recent?.requests ?? '—' }} 次<span>·</span>{{ snapshot?.recent ? compact(tokens(snapshot.recent)) : '—' }} Token</p></template><p class="muted scope-small">{{ host(account.siteUrl) }} · 我的全部 Key</p><button v-if="account.sessionStatus === 'needsLogin'" class="button primary wide-button" @click="open('login')">重新登录</button><button v-else class="button wide-button" @click="open('overview')">详细用量<ArrowUpRight :size="15"/></button></section>
+          <section v-if="expanded" class="float-expanded">
+            <div class="section-head"><h3>最近一笔</h3><span class="muted" :title="snapshot?.latest ? timestamp(snapshot.latest.createdAt, timezone, true) + ' · ' + timezone : undefined">{{ relativeTime(snapshot?.latest?.createdAt, freshnessNow) }}</span></div>
+            <template v-if="snapshot?.latest"><div class="latest-line"><span :title="snapshot.latest.model">{{ snapshot.latest.model }}</span><strong :title="'实际扣费：$' + (snapshot.latest.actualCostExact || snapshot.latest.actualCost)">{{ money(snapshot.latest.actualCost, 4) }}</strong></div><p class="muted">{{ compact(tokens(snapshot.latest)) }} Token · 缓存率 {{ cache(snapshot.latest) }}</p></template><p v-else class="muted">暂无已记录的请求</p>
+            <template v-if="range !== 'recent'"><h3>近 {{ account.preferences.recentMinutes }} 分钟</h3><p class="recent-line">{{ money(snapshot?.recent?.actualCost) }}<span>·</span>{{ snapshot?.recent?.requests ?? '—' }} 次<span>·</span>{{ snapshot?.recent ? compact(tokens(snapshot.recent)) : '—' }} Token</p></template>
+            <details v-if="!good || snapshot?.message" class="sync-explanation"><summary>同步说明</summary><p>{{ syncState.title }}</p></details>
+            <p class="muted scope-small">{{ host(account.siteUrl) }} · 我的全部 Key</p><button v-if="account.sessionStatus === 'needsLogin'" class="button primary wide-button" @click="open('login')">重新登录</button><button v-else class="button wide-button" @click="open('overview')">详细用量<ArrowUpRight :size="15"/></button>
+          </section>
         </template>
         <section v-else class="welcome"><div class="welcome-mark">S<span>G</span></div><h2>用量，一眼看清</h2><p>连接你的 Sub2API，查看余额与个人用量。</p><button class="button primary wide-button" @click="open('login')"><Plus :size="16"/>连接账号</button><button v-if="isNative" class="button quiet wide-button" :disabled="busy" @click="enableDemo">体验示例 · 本地模拟数据</button><p v-if="error || pinError" class="form-error" role="alert">{{ error || pinError }}</p></section>
         <footer v-if="!account" class="float-footer welcome-footer"><span class="sync-status">等待连接</span><div class="float-actions"><button class="icon-button pin-toggle" :aria-label="pinLabel" :title="pinLabel" :aria-pressed="pinned" :aria-busy="pinBusy" :disabled="pinBusy || !data" @click="togglePin"><LoaderCircle v-if="pinBusy" class="spin" :size="14"/><Pin v-else-if="pinned" :size="14"/><PinOff v-else :size="14"/></button></div></footer>
       </template>
       <template v-else>
         <nav class="tabs" aria-label="用量页面"><button v-for="(title, id) in { overview: '用量概览', records: '请求记录', analysis: '用量分析' }" :key="id" :class="{ active: page === id }" :aria-current="page === id ? 'page' : undefined" @click="page = id">{{ title }}</button></nav>
-        <main class="main-content">
+        <main class="main-content" :data-page="page">
           <div v-if="error" class="alert error-alert" role="alert">{{ error }}<button class="icon-button" aria-label="关闭错误提示" @click="error = ''"><X :size="15"/></button></div>
-          <div v-if="notice" class="alert success-alert" role="status"><Check :size="15"/>{{ notice }}</div>
+          <div v-if="notice" class="alert success-alert notice-toast" role="status"><Check :size="15"/><span>{{ notice }}</span><button class="icon-button" aria-label="关闭成功提示" @click="notice = ''"><X :size="14"/></button></div>
           <template v-if="['overview', 'records', 'analysis'].includes(page)">
             <div v-if="!account" class="empty-state"><h2>连接第一个账号</h2><p>管理员和普通用户都可以通过邮箱登录，查看自己的全部 Key。</p><button class="button primary" @click="open('login')">连接账号</button></div>
             <template v-else><div class="page-heading"><div><h1>{{ page === 'overview' ? '用量概览' : page === 'records' ? '请求记录' : '用量分析' }}</h1><p class="muted">{{ host(account.siteUrl) }} · 我的全部 Key</p></div><div class="heading-actions"><button class="icon-button" aria-label="立即刷新" :disabled="busy" @click="refresh"><RefreshCw :size="17" :class="{ spin: busy }"/></button><select class="period-select" aria-label="统计范围" :value="range" :disabled="busy" @change="changeRange"><option v-for="(label, value) in ranges" :key="value" :value="value">{{ value === 'recent' ? '近 ' + account.preferences.recentMinutes + ' 分钟' : label }}</option></select></div></div>
-              <p class="muted range-description">{{ snapshot ? timestamp(snapshot.start, timezone, true) + ' — ' + timestamp(snapshot.end, timezone, true) : '正在获取统计范围' }} · {{ timezone }}<template v-if="range === 'week'"> · 滚动 168 小时</template><template v-if="range === 'month'"> · 自然月累计</template></p>
-              <div v-if="!good && snapshot" class="alert" role="status">{{ snapshot.message || stateLabel }}<button v-if="account.sessionStatus === 'needsLogin'" class="button" @click="reconnect(account)">重新登录</button></div>
-              <Metrics :fields="['cost','requests','tokens','cache']" :totals="snapshot?.totals || null" :balance="snapshot?.balance ?? null" :balance-exact="snapshot?.balanceExact"/>
-              <div class="balance-line"><Wallet :size="16"/><span>当前余额</span><strong>{{ money(snapshot?.balance) }}</strong><span class="muted">{{ timestamp(snapshot?.balanceUpdatedAt, timezone) }} · 与统计范围无关</span></div>
+              <div class="range-meta"><p class="muted range-description">{{ snapshot ? timestamp(snapshot.start, timezone, true) + ' — ' + timestamp(snapshot.end, timezone, true) : '正在获取统计范围' }} · {{ timezone }}<template v-if="range === 'week'"> · 滚动 168 小时</template><template v-if="range === 'month'"> · 自然月累计</template></p><details class="detail-sync"><summary :class="{ 'warning-text': !good }"><span :class="['status-dot', { good }]"/>{{ stateLabel }}</summary><div class="sync-popover"><p>{{ syncState.title }}</p><button v-if="account.sessionStatus === 'needsLogin'" class="button" @click="reconnect(account)">重新登录</button></div></details></div>
+              <div v-if="page === 'records'" class="records-summary"><span class="summary-scope">全部 Key · {{ rangeLabel }}</span><Metrics :fields="['cost','requests','tokens','cache']" :totals="snapshot?.totals || null" :balance="snapshot?.balance ?? null"/></div>
+              <Metrics v-else :fields="['cost','requests','tokens','cache']" :totals="snapshot?.totals || null" :balance="snapshot?.balance ?? null" :balance-exact="snapshot?.balanceExact"/>
+              <div v-if="page !== 'records'" class="balance-line"><Wallet :size="16"/><span>当前余额</span><strong>{{ money(snapshot?.balance) }}</strong><span class="muted" :title="'余额更新时间：' + timestamp(snapshot?.balanceUpdatedAt, timezone, true)">当前快照 · 不随统计范围累计</span></div>
               <div v-if="detailError" class="alert error-alert" role="alert">{{ detailError }}<button class="button" @click="loadDetail()">重试</button></div>
               <div v-if="detailLoading" class="loading-line" role="status"><LoaderCircle :size="14" class="spin"/>正在读取{{ page === 'records' ? '请求记录' : '用量分析' }}…</div>
-              <p v-if="page !== 'records' && analysis" class="muted range-description">图表更新 {{ timestamp(analysis.syncedAt, analysis.timezone) }} · {{ timestamp(analysis.start, analysis.timezone, true) }} — {{ timestamp(analysis.end, analysis.timezone, true) }} · {{ analysis.timezone }}</p>
+              <p v-if="page !== 'records' && analysis" class="muted analysis-updated" :title="timestamp(analysis.start, analysis.timezone, true) + ' — ' + timestamp(analysis.end, analysis.timezone, true) + ' · ' + analysis.timezone">图表更新于 {{ timestamp(analysis.syncedAt, analysis.timezone) }}</p>
               <p v-if="page === 'records' && recordData && !recordData.complete" class="warning-text" role="status">{{ recordData.message || '请求数据变化，当前列表尚未完整确认。' }} <button class="button quiet" :disabled="detailLoading" @click="restartRecords">刷新第一页</button></p><p v-if="page === 'records' && recordData?.end" class="muted range-description">列表截止 {{ timestamp(recordData.end, recordData.timezone || timezone, true) }}<template v-if="range === 'week' || range === 'recent'"> · 翻页沿用本次时间窗口</template><template v-if="recordData.complete && recordData.message"> · {{ recordData.message }}</template></p>
-              <template v-if="page === 'overview'"><div class="recent-strip"><strong>近 {{ account.preferences.recentMinutes }} 分钟</strong><span>{{ money(snapshot?.recent?.actualCost) }} 扣费</span><span>{{ snapshot?.recent?.requests ?? '—' }} 次请求</span><span>{{ snapshot?.recent ? compact(tokens(snapshot.recent)) : '—' }} Token</span></div><div class="overview-columns"><section><div class="section-head"><h3>{{ rangeLabel }}消耗</h3><span class="muted">USD</span></div><UsageChart :points="analysis?.trend || []"/></section><section><h3>Token 构成</h3><dl class="token-breakdown"><div v-for="(title, key) in { inputTokens: '普通输入', cacheReadTokens: '缓存读取', cacheCreationTokens: '缓存写入', outputTokens: '输出' }" :key="key"><dt>{{ title }}</dt><dd>{{ snapshot?.totals ? compact(snapshot.totals[key]) : '—' }}</dd></div></dl><p class="muted help-note"><CircleHelp :size="12"/>缓存率按输入 Token 加权</p></section></div><p v-if="analysis && (analysis.message || !analysis.complete)" :class="analysis.complete ? 'muted' : 'warning-text'">{{ analysis.message || '分析数据尚未完整同步' }}</p><div class="section-head"><h3>最近请求</h3><button class="button quiet" @click="page = 'records'">全部记录<ArrowUpRight :size="14"/></button></div><UsageTable :items="recordData?.items || []" :timezone="recordData?.timezone || timezone" :loading="detailLoading"/></template>
-              <template v-if="page === 'records'"><form class="filters" @submit.prevent="applyFilters"><label>模型<input v-model="modelFilter" placeholder="全部模型" autocomplete="off"></label><label>Key ID<input v-model="keyFilter" placeholder="全部 Key" inputmode="numeric" pattern="[0-9]*"></label><button class="button" :disabled="detailLoading">筛选</button><button type="button" class="button quiet" @click="modelFilter = ''; keyFilter = ''; applyFilters()">重置</button></form><p class="muted">筛选只作用于下方记录，卡片继续显示全部 Key 汇总。</p><UsageTable :items="recordData?.items || []" :timezone="recordData?.timezone || timezone" :loading="detailLoading"/><div class="pagination"><span class="muted">共 {{ recordData?.total ?? '—' }} 条{{ recordData && !recordData.complete ? ' · 数据不完整' : '' }}</span><div><button class="icon-button" aria-label="上一页" :disabled="recordPage <= 1 || detailLoading" @click="paginate(-1)"><ChevronsLeft :size="16"/></button><span>{{ recordPage }} / {{ totalPages }}</span><button class="icon-button" aria-label="下一页" :disabled="recordPage >= totalPages || detailLoading" @click="paginate(1)"><ChevronsRight :size="16"/></button></div></div></template>
-              <template v-if="page === 'analysis'"><p v-if="analysis && (analysis.message || !analysis.complete)" :class="analysis.complete ? 'muted' : 'warning-text'">{{ analysis.message || '分析数据不完整，以下为已同步部分' }}</p><div class="analysis-columns"><section v-for="group in [{ title: '模型消耗', items: analysis?.models || [] }, { title: 'Key 消耗', items: analysis?.keys || [] }]" :key="group.title"><h3>{{ group.title }}</h3><div v-if="!group.items.length" class="empty-state">{{ detailLoading ? '正在读取…' : '暂无分布数据' }}</div><div v-for="item in group.items" :key="item.name" class="rank-row"><div class="rank-heading"><strong>{{ item.name }}</strong><span>{{ money(item.actualCost, 3) }}</span></div><div class="rank-track"><div :style="{ width: relativeWidth(item.actualCost, group.items) }"/></div><div class="muted rank-caption"><span>{{ item.requests }} 次 · {{ compact(tokens(item)) }} Token</span><span>缓存 {{ cache(item) }}</span></div></div></section></div></template>
+              <template v-if="page === 'overview'">
+                <div class="recent-strip"><strong>近 {{ account.preferences.recentMinutes }} 分钟</strong><span>{{ money(snapshot?.recent?.actualCost) }} 扣费</span><span>{{ snapshot?.recent?.requests ?? '—' }} 次请求</span><span>{{ snapshot?.recent ? compact(tokens(snapshot.recent)) : '—' }} Token</span></div>
+                <div class="overview-columns"><section><div class="section-head"><h3>{{ rangeLabel }}消耗</h3><span class="muted">USD</span></div><UsageChart :points="analysis?.trend || []" :meta="analysis?.trendMeta" :loading="detailLoading"/></section><section><h3>Token 构成</h3><dl class="token-breakdown"><div v-for="(title, key) in { inputTokens: '普通输入', cacheReadTokens: '缓存读取', cacheCreationTokens: '缓存写入', outputTokens: '输出' }" :key="key"><dt>{{ title }}</dt><dd>{{ snapshot?.totals ? compact(snapshot.totals[key]) : '—' }}</dd></div></dl><p class="muted help-note"><CircleHelp :size="12"/>缓存率按输入 Token 加权</p></section></div>
+                <p v-if="analysis && !analysis.complete" class="warning-text">{{ analysis.message || '分析数据尚未完整同步' }}</p>
+                <div class="section-head"><h3>最近请求</h3><button class="button quiet" @click="page = 'records'">全部记录<ArrowUpRight :size="14"/></button></div><UsageTable :items="recordData?.items || []" :timezone="recordData?.timezone || timezone" :loading="detailLoading"/>
+              </template>
+              <template v-if="page === 'records'">
+                <form class="filters" @submit.prevent="applyFilters"><FilterSelect v-model="modelFilter" label="模型" placeholder="全部模型" :options="modelOptions" :loading="optionsLoading" allow-custom/><FilterSelect v-model="keyFilter" label="Key" placeholder="全部 Key" :options="keyOptions" :loading="optionsLoading" allow-custom custom-pattern="[0-9]+"/><button class="button primary" :disabled="detailLoading">筛选</button><button type="button" class="button quiet" @click="modelFilter = ''; keyFilter = ''; applyFilters()">重置</button></form>
+                <div class="filter-scope"><p class="muted">{{ filtersApplied ? '已筛选记录；上方与浮窗仍显示全部 Key 汇总。' : '按模型或 Key 查找请求' }}</p><details v-if="optionsError || filterOptions?.message || filterOptions && (!filterOptions.modelsComplete || !filterOptions.keysComplete)" class="options-note"><summary>候选说明</summary><p>{{ optionsError || filterOptions?.message || '候选尚未完整，可输入模型名称或数字 Key ID。' }}</p><button class="button quiet" :disabled="optionsLoading" @click="loadFilterOptions(true)">重新读取候选</button></details></div>
+                <UsageTable :items="recordData?.items || []" :timezone="recordData?.timezone || timezone" :loading="detailLoading" :filtered="filtersApplied"/>
+                <div class="pagination"><span class="muted">共 {{ recordData?.total ?? '—' }} 条{{ recordData && !recordData.complete ? ' · 待确认完整性' : '' }}</span><div><button class="icon-button" aria-label="上一页" :disabled="recordPage <= 1 || detailLoading" @click="paginate(-1)"><ChevronsLeft :size="16"/></button><span>{{ recordPage }} / {{ totalPages }}</span><button class="icon-button" aria-label="下一页" :disabled="recordPage >= totalPages || detailLoading" @click="paginate(1)"><ChevronsRight :size="16"/></button></div></div>
+              </template>
+              <template v-if="page === 'analysis'">
+                <p v-if="analysis && !analysis.complete" class="warning-text">{{ analysis.message || '分析数据不完整，以下为已同步部分' }}</p>
+                <div class="analysis-columns"><section v-for="group in analysisGroups" :key="group.kind"><div class="section-head"><h3>{{ group.title }}</h3><span class="muted">按费用从高到低</span></div><p class="muted rank-help">条形与本组最高费用比较 · 点击查看请求</p><div v-if="!group.items.length" class="empty-state">{{ detailLoading ? '正在读取…' : '暂无分布数据' }}</div><button v-for="item in group.items" :key="item.keyId ?? item.name" class="rank-row" :disabled="group.kind === 'key' && item.keyId == null" :aria-label="'查看' + item.name + '的请求'" @click="openAnalysisRecords(group.kind, item)"><span class="rank-heading"><strong>{{ item.name }}</strong><span>{{ money(item.actualCost, 3) }}</span></span><span class="rank-track"><span :style="{ width: relativeWidth(item.actualCost, group.items) }"/></span><span class="muted rank-caption"><span>{{ item.requests }} 次 · {{ compact(tokens(item)) }} Token</span><span>缓存 {{ cache(item) }}</span></span></button></section></div>
+              </template>
             </template>
           </template>
           <template v-else-if="page === 'accounts'"><div class="page-heading"><div><h1>账号管理</h1><p class="muted">每个站点与登录账号独立保存</p></div><button class="button primary" @click="open('login')"><Plus :size="16"/>添加账号</button></div><div v-if="!data?.accounts.length" class="empty-state">还没有连接的账号</div><section v-for="a in data?.accounts" :key="a.id" class="account-row"><span class="avatar large-avatar">{{ a.alias.slice(0, 1) }}</span><div class="account-info"><strong>{{ a.alias }}</strong><span class="role-badge">{{ a.role === 'admin' ? '管理员' : '普通用户' }}{{ a.id === account?.id ? ' · 当前' : '' }}</span><p>{{ host(a.siteUrl) }} · {{ a.email }}</p><p>默认{{ ranges[a.preferences.defaultRange] }} · {{ a.preferences.metrics.map(f => labels[f]).join(' / ') }}</p><span :class="a.sessionStatus === 'needsLogin' ? 'warning-text' : 'muted'">{{ a.sessionStatus === 'needsLogin' ? '会话已过期，请重新登录' : '账号已连接' }}</span></div><div class="account-actions"><button class="button" @click="open('preferences', a)">显示设置</button><button v-if="a.sessionStatus === 'needsLogin'" class="button" @click="reconnect(a)">重新登录</button><button v-else class="button" :disabled="a.id === account?.id || busy" @click="selectAccount(a.id)">切换查看</button><button class="text-button muted" :disabled="busy" @click="logout(a)">退出登录</button><button class="text-button danger" @click="confirmRemove = a.id">移除</button></div><div v-if="confirmRemove === a.id" class="remove-confirm"><span>仅移除本机账号与保存的会话，不删除站点数据。</span><button class="button danger" :disabled="busy" @click="remove(a)">确认移除</button><button class="button" @click="confirmRemove = null">取消</button></div></section></template>
           <form v-else-if="page === 'preferences'" class="form-column" @submit.prevent="savePreferences"><h1>账号显示设置</h1><p class="muted">这些设置只影响 {{ prefAlias }}</p><label class="field">账号名称<input v-model="prefAlias" maxlength="24" required></label><div class="form-grid"><label class="field">默认统计范围<select v-model="pref.defaultRange"><option v-for="(label, value) in ranges" :key="value" :value="value">{{ label }}</option></select></label><label class="field">最近窗口（分钟）<input v-model.number="pref.recentMinutes" type="number" min="1" max="120" required></label></div><label class="field">统计时区<input v-model="pref.timezone" list="timezones" required><datalist id="timezones"><option>Asia/Shanghai</option><option>UTC</option><option>America/New_York</option><option>Europe/London</option><option>Asia/Tokyo</option></datalist></label><h3>常驻指标</h3><p class="muted">至少选择一项，使用箭头调整显示顺序。</p><div class="preference-list"><div v-for="(field, index) in fieldOrder" :key="field" class="preference-row"><label><input v-model="pref.metrics" type="checkbox" :value="field" :disabled="pref.metrics.length === 1 && pref.metrics.includes(field)">{{ labels[field] }}<small v-if="field === 'balance'">始终为当前值</small></label><button type="button" class="icon-button" :aria-label="'上移' + labels[field]" :disabled="index === 0" @click="moveField(index, -1)"><ArrowUp :size="14"/></button><button type="button" class="icon-button" :aria-label="'下移' + labels[field]" :disabled="index === fieldOrder.length - 1" @click="moveField(index, 1)"><ArrowDown :size="14"/></button></div></div><div class="form-actions"><button class="button primary" :disabled="busy">保存设置</button><button type="button" class="button" @click="page = 'accounts'">取消</button></div></form>
-          <section v-else-if="page === 'settings'" class="form-column"><form @submit.prevent="saveSettings">
-            <h1>应用设置</h1><p class="muted">调整常驻浮窗与同步节奏</p>
+          <section v-else-if="page === 'settings'" class="form-column settings-page"><form @submit.prevent="saveSettings">
+            <h1>应用设置</h1><p class="muted settings-intro">调整外观、同步和启动方式</p>
             <p v-if="settingsConflicts.length" class="warning-text settings-conflict" role="status">{{ settingsConflicts.map(field => settingsLabels[field]).join('、') }}已在其他入口修改；未保存的修改仍保留，保存前需要重新确认。</p>
-            <label class="field">外观主题<select v-model="settings.theme" aria-label="外观主题"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></label>
-            <label class="check-field"><input v-model="settings.alwaysOnTop" type="checkbox">浮窗始终置顶</label><p class="muted">只控制浮窗；卡片图钉和托盘中的开关与这里同步。</p>
-            <label class="field">背景不透明度 <strong>{{ Math.round(settings.opacity * 100) }}%</strong><input v-model.number="settings.opacity" type="range" min="0.25" max="1" step="0.05"></label><p class="muted">只调整卡片背景，文字和菜单保持清晰。</p>
-            <div class="size-reset"><button type="button" class="button" :disabled="busy || !isNative" @click="resetSize">恢复默认尺寸</button><p class="muted">清除收起和展开两种状态的手动尺寸；拖动浮窗边缘可重新调整。</p></div>
-            <h3>刷新间隔</h3><div class="form-grid"><label class="field">最近请求（秒）<input v-model.number="settings.recentRefreshSeconds" type="number" min="5" max="300" required></label><label class="field">余额和用量（秒）<input v-model.number="settings.summaryRefreshSeconds" type="number" min="10" max="3600" required></label><label class="field">后台账号（秒）<input v-model.number="settings.backgroundRefreshSeconds" type="number" min="30" max="3600" required></label></div>
-            <p class="muted">实时用量以站点已记录的请求为准，不包含生成过程中的逐 Token 进度。</p><div class="form-actions"><button class="button primary" :disabled="busy">{{ settingsConfirming ? '确认并保存' : '保存设置' }}</button><button type="button" class="button" @click="page = 'overview'">返回概览</button></div>
+            <section class="settings-block" aria-label="外观与浮窗"><h3>外观与浮窗</h3><div class="form-grid"><label class="field">外观主题<select v-model="settings.theme" aria-label="外观主题"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></label><label class="field opacity-field"><span>背景不透明度 <strong>{{ Math.round(settings.opacity * 100) }}%</strong></span><input v-model.number="settings.opacity" type="range" min="0.25" max="1" step="0.05"></label></div>
+              <div class="settings-inline"><label class="check-field"><input v-model="settings.alwaysOnTop" type="checkbox">浮窗始终置顶</label><button type="button" class="button quiet" :disabled="busy || !isNative" @click="resetSize">恢复默认尺寸</button></div>
+              <details class="settings-help"><summary>浮窗显示说明</summary><p>透明度只调整背景，文字和菜单保持清晰。置顶设置与卡片图钉、托盘同步。恢复默认尺寸会清除两种状态的手动尺寸，之后仍可拖动边缘调整。</p></details>
+            </section>
+            <section class="settings-block" aria-label="同步频率"><h3>同步频率</h3><div class="form-grid refresh-grid"><label class="field">最近请求（秒）<input v-model.number="settings.recentRefreshSeconds" type="number" min="5" max="300" required></label><label class="field">余额和用量（秒）<input v-model.number="settings.summaryRefreshSeconds" type="number" min="10" max="3600" required></label><label class="field">后台账号（秒）<input v-model.number="settings.backgroundRefreshSeconds" type="number" min="30" max="3600" required></label></div><p class="muted">以站点已记录的请求为准。</p></section>
+            <div class="form-actions settings-save"><button class="button primary" :disabled="busy">{{ settingsConfirming ? '确认并保存' : '保存设置' }}</button><button type="button" class="button" @click="page = 'overview'">返回概览</button></div>
             </form><DesktopPanel/>
             <UpdatePanel/>
           </section>

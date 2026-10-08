@@ -32,7 +32,9 @@ Windows 桌面 Sub2API 个人用量悬浮窗。平时只显示关心的数字，
 
 运行需要 WebView2 Runtime。安装版缺少运行时时会联网下载，免安装版需自行准备。Windows 安装器没有 Authenticode 证书签名；更新包另有用于内置验签的 Minisign 签名。
 
-当前源码与公开版本为 **0.1.9 预览版**，见 [发布说明](docs/releases/0.1.9.md)。公开预览清单已指向 0.1.9，0.1.8 安装版可内置检查更新，旧版无更新功能时需手动安装。0.1.9 二进制源码固定为 `26d6da4`，其 [Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37197619149) 已通过；后续提交不移动已公开版本 Tag。已完成的用户桌面操作验收基线为 **0.1.5 / Windows 10 x64 / 150% 显示缩放**。新版真实登录自启、键盘操作与账号升级、实际双屏、Windows 11、其他系统 DPI、真实验证码或 TOTP 部署及长期内存稳定性仍待验证，具体范围见 [验证记录](docs/validation.md)。
+当前源码为 **0.1.10 本地候选**，集中打磨同步提示、趋势、请求筛选、费用排序和设置反馈，见 [候选说明](docs/releases/0.1.10.md)。尚未公开发布或更改在线更新清单；上方下载仍为 **0.1.9 预览版**，其二进制源码固定为 `26d6da4`，[Windows CI](https://github.com/YuVerseX/SubGauge/actions/runs/37197619149) 已通过，后续提交不移动旧 Tag。
+
+已完成的用户桌面操作验收基线为 **0.1.5 / Windows 10 x64 / 150% 显示缩放**。新版真实登录自启、键盘操作与账号升级、实际双屏、Windows 11、其他系统 DPI、真实验证码或 TOTP 部署及长期内存稳定性仍待验证，具体范围见 [验证记录](docs/validation.md)。
 
 ## 从源码运行
 
@@ -67,6 +69,7 @@ npm run package:update-manifest
 | [0.1.7 窗口方案](docs/plans/0.1.7-window-controls.md) | 置顶快捷入口与多屏拖动，候选版验收范围 |
 | [0.1.8 更新方案](docs/plans/0.1.8-in-app-updates.md) | 确认更新、签名、安装准备及发布渠道 |
 | [0.1.9 日常使用方案](docs/plans/0.1.9-desktop-convenience.md) | 登录自启、托盘启动、快捷键和同步提示 |
+| [0.1.10 体验打磨方案](docs/plans/0.1.10-experience-polish.md) | 分项状态、时间趋势、搜索筛选和界面打磨 |
 | [发布流程](docs/releasing.md) | 公开仓库及二进制发布流程 |
 | [变更记录](CHANGELOG.md) | 版本行为变化 |
 

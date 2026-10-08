@@ -99,10 +99,33 @@ impl Fixture {
             Distribution::Installed,
         )
     }
+    fn cleanup(&self) -> std::io::Result<()> {
+        // WebView2 may release profile handles shortly after HWND destruction.
+        // Always perform cleanup before surfacing a native assertion failure.
+        let mut last_error = None;
+        for _ in 0..30 {
+            match std::fs::remove_dir_all(&self.0) {
+                Ok(()) => return Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => last_error = Some(error),
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Err(last_error.unwrap())
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.0).unwrap();
+        if let Err(error) = self.cleanup() {
+            let message = format!("Fixture cleanup failed at {}: {error}", self.0.display());
+            if std::thread::panicking() {
+                // Preserve the original assertion instead of aborting on a
+                // destructor panic, and retain the exact cleanup target.
+                eprintln!("{message}");
+            } else {
+                panic!("{message}");
+            }
+        }
     }
 }
 
@@ -243,10 +266,14 @@ fn native_updater_smoke() {
     let stopped = Arc::new(AtomicBool::new(false));
     let tampered = Arc::new(AtomicBool::new(false));
     let wrong_version = Arc::new(AtomicBool::new(false));
+    let metadata_requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let package_requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let server = {
         let stopped = stopped.clone();
         let tampered = tampered.clone();
         let wrong_version = wrong_version.clone();
+        let metadata_requests = metadata_requests.clone();
+        let package_requests = package_requests.clone();
         std::thread::spawn(move || {
             while !stopped.load(Ordering::Acquire) {
                 let Ok((mut stream, _)) = listener.accept() else {
@@ -256,9 +283,21 @@ fn native_updater_smoke() {
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
-                let mut request = [0u8; 4096];
-                let count = stream.read(&mut request).unwrap_or(0);
-                if String::from_utf8_lossy(&request[..count]).starts_with("GET /package ") {
+                let mut request = Vec::new();
+                loop {
+                    let mut buffer = [0u8; 1024];
+                    let count = stream.read(&mut buffer).unwrap_or(0);
+                    if count == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..count]);
+                    if request.windows(4).any(|v| v == b"\r\n\r\n") || request.len() >= 16 * 1024 {
+                        break;
+                    }
+                }
+                let request = String::from_utf8_lossy(&request);
+                if request.starts_with("GET /package ") {
+                    package_requests.fetch_add(1, Ordering::Relaxed);
                     let payload = if tampered.load(Ordering::Acquire) {
                         b"tampered".as_slice()
                     } else {
@@ -268,7 +307,8 @@ fn native_updater_smoke() {
                     write!(stream, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n", payload.len()).unwrap();
                     stream.write_all(payload).unwrap();
                     stream.write_all(b"\r\n0\r\n\r\n").unwrap();
-                } else {
+                } else if request.starts_with("GET /metadata ") {
+                    metadata_requests.fetch_add(1, Ordering::Relaxed);
                     let version = if wrong_version.load(Ordering::Acquire) {
                         "9.9.10"
                     } else {
@@ -280,7 +320,14 @@ fn native_updater_smoke() {
                     })).unwrap();
                     write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
                     stream.write_all(&body).unwrap();
+                } else {
+                    stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
                 }
+                // Graceful TCP half-close avoids a Windows reset while reqwest
+                // is still consuming the fixture's final response bytes.
+                stream.shutdown(std::net::Shutdown::Write).unwrap();
+                let mut tail = [0u8; 128];
+                let _ = stream.read(&mut tail);
             }
         })
     };
@@ -326,7 +373,10 @@ fn native_updater_smoke() {
                     if available.phase != Phase::Available
                         || available.version.as_deref() != Some("9.9.9")
                     {
-                        return Err("Native check failed".into());
+                        return Err(format!(
+                            "Native check failed: {}",
+                            serde_json::to_string(&available).unwrap()
+                        ));
                     }
                     if available.published_at.as_deref() != Some("2026-10-03T01:00:00+00:00") {
                         return Err("Publication date is not RFC3339".into());
@@ -412,17 +462,13 @@ fn native_updater_smoke() {
         .unwrap()
         .take()
         .expect("Native update task did not finish");
-    result.unwrap();
-    // WebView2 profile teardown may finish shortly after the HWND is destroyed.
-    for _ in 0..10 {
-        if std::fs::remove_dir_all(&fixture.0).is_ok() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    let cleanup = fixture.cleanup();
     assert!(
-        !fixture.0.exists(),
-        "Native fixture profile was not released"
+        result.is_ok(),
+        "{}; fixture requests: metadata={}, package={}; cleanup={cleanup:?}",
+        result.unwrap_err(),
+        metadata_requests.load(Ordering::Relaxed),
+        package_requests.load(Ordering::Relaxed)
     );
-    std::mem::forget(fixture);
+    cleanup.expect("Native fixture profile was not released");
 }

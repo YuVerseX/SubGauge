@@ -1,9 +1,10 @@
-import type { AppSettings, Metric, UsageSnapshot } from './types'
+import type { AppSettings, Metric, SyncPart, UsageSnapshot } from './types'
 
 export interface SyncPresentation {
   label: string
   good: boolean
   title: string
+  issues?: string[]
 }
 
 const statusLabels: Record<string, string> = {
@@ -55,6 +56,7 @@ export function syncPresentation(
   fields: readonly Metric[],
   now = Date.now(),
   timezone = snapshot?.timezone || 'Asia/Shanghai',
+  includeRecent = false,
 ): SyncPresentation {
   const summaryThreshold = staleAfter(settings.summaryRefreshSeconds, 30)
   const recentThreshold = staleAfter(settings.recentRefreshSeconds, 10)
@@ -68,6 +70,45 @@ export function syncPresentation(
     ...(snapshot?.message ? [`状态说明：${snapshot.message}`] : []),
   ].join('\n')
   if (!snapshot) return { label: '等待同步', good: false, title }
+  if (snapshot.sync) {
+    const parts = snapshot.sync
+    const describe = (name: string, part: SyncPart | undefined, time: ReturnType<typeof syncTime>, hasData: boolean) => {
+      if (!part) return `${name}待同步`
+      if (['needsLogin', 'expired'].includes(part.state)) return '需重新登录'
+      if (part.state === 'incomplete') return `${name}待补齐`
+      if (['error', 'offline'].includes(part.state)) return `${name}同步失败`
+      if (part.state === 'stale') return `${name}待更新`
+      if (['loading', 'syncing'].includes(part.state)) return `${name}同步中`
+      if (!part.complete) return `${name}待补齐`
+      if (!['ready', 'synced'].includes(part.state)) return `${name}待同步`
+      if (time.stale) return `${name}待更新`
+      if (!hasData || !time.available) return `${name}待同步`
+      return ''
+    }
+    const usageName = snapshot.range === 'recent' ? '最近窗口' : '用量'
+    const latest = syncTime(parts.latest?.syncedAt, now, recentThreshold, timezone)
+    const states = {
+      usage: describe(usageName, parts.usage, usage, snapshot.totals != null),
+      balance: describe('余额', parts.balance, balance, snapshot.balance != null),
+      recent: describe('最近窗口', parts.recent, recent, snapshot.recent != null),
+      latest: parts.latest ? describe('最近一笔', parts.latest, latest, true) : '',
+    }
+    const relevant = [
+      ...(fields.some(field => field !== 'balance') ? [states.usage] : []),
+      ...(fields.includes('balance') ? [states.balance] : []),
+      ...(includeRecent || snapshot.range === 'recent' && fields.some(field => field !== 'balance') ? [states.recent] : []),
+      ...(includeRecent ? [states.latest] : []),
+    ]
+    if (['needsLogin', 'expired'].includes(snapshot.status)) relevant.unshift('需重新登录')
+    const issues = [...new Set(relevant.filter(Boolean))]
+    const detailed = [
+      `用量：${usage.text}${states.usage ? ` · ${states.usage}` : ''}${parts.usage.message ? `\n${parts.usage.message}` : ''}`,
+      `余额：${balance.text}${states.balance ? ` · ${states.balance}` : ''}${parts.balance.message ? `\n${parts.balance.message}` : ''}`,
+      `最近窗口：${recent.text}${states.recent ? ` · ${states.recent}` : ''}${parts.recent.message ? `\n${parts.recent.message}` : ''}`,
+      ...(parts.latest ? [`最近一笔：${latest.text}${states.latest ? ` · ${states.latest}` : ''}${parts.latest.message ? `\n${parts.latest.message}` : ''}`] : []),
+    ].join('\n')
+    return { label: issues.length > 1 ? '部分数据待更新' : issues[0] || '已同步', good: !issues.length, title: detailed, issues }
+  }
   if (!['ready', 'synced'].includes(snapshot.status)) {
     return { label: statusLabels[snapshot.status] || '等待同步', good: false, title }
   }

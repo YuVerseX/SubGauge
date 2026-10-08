@@ -125,6 +125,13 @@ fn preference_analysis_fixture() -> AnalysisResult {
         end: "2026-10-02T00:00:00Z".into(),
         timezone: "Asia/Shanghai".into(),
         trend: vec![],
+        trend_meta: TrendMetadata {
+            source: "server".into(),
+            granularity: "hour".into(),
+            timezone: None,
+            missing_buckets: "unknown".into(),
+            complete: true,
+        },
         models: vec![],
         keys: vec![],
         complete: true,
@@ -851,6 +858,9 @@ async fn analysis_keeps_sample_metadata_and_manual_refresh_bypasses_cache() {
     let end = DateTime::parse_from_rfc3339(&first.end).unwrap();
     assert!(start < end);
     assert!(first.complete);
+    assert_eq!(first.trend_meta.source, "server");
+    assert!(first.trend_meta.timezone.is_none());
+    assert_eq!(first.trend_meta.missing_buckets, "unknown");
     let cached = engine.analysis(query.clone()).await.unwrap();
     assert_eq!(cached.start, first.start);
     assert_eq!(cached.end, first.end);
@@ -981,6 +991,247 @@ async fn recent_success_cannot_clear_failed_summary() {
     );
     server.abort();
     cleanup(&engine);
+}
+
+#[tokio::test]
+async fn incomplete_recent_window_does_not_taint_today_or_force_summary_reads() {
+    let changing = Arc::new(AtomicUsize::new(1));
+    let recent_calls = Arc::new(AtomicUsize::new(0));
+    let summary_calls = Arc::new(AtomicUsize::new(0));
+    let unstable = changing.clone();
+    let counts = recent_calls.clone();
+    let summaries = summary_calls.clone();
+    let now = Utc::now() - Duration::seconds(1);
+    let (site, task) = server(move |request| {
+        if request.starts_with("GET /api/v1/usage/stats") {
+            summaries.fetch_add(1, Ordering::SeqCst);
+            return ok(json!({"total_requests":42,"total_actual_cost":"2.34",
+                "total_input_tokens":0,"total_output_tokens":0,
+                "total_cache_read_tokens":0,"total_cache_creation_tokens":0}));
+        }
+        if request.starts_with("GET /api/v1/user/profile") {
+            return ok(json!({"balance":10}));
+        }
+        let serial = counts.fetch_add(1, Ordering::SeqCst) as i64;
+        let id = if unstable.load(Ordering::SeqCst) > 0 {
+            serial + 1
+        } else {
+            100
+        };
+        ok(json!({"items":[row(id, now)],"total":1}))
+    })
+    .await;
+    let e = engine();
+    let rt = seed(&e, account(site, "split-status"), session(false));
+    e.refresh_account("split-status", true).await.unwrap();
+    let first = e.bootstrap().await.snapshot.unwrap();
+    assert!(first.sync.complete && first.sync.usage.complete);
+    assert_eq!(first.sync.usage.state, "synced");
+    assert_eq!(first.sync.recent.state, "incomplete");
+    assert!(!first.sync.recent.complete);
+    assert_eq!(first.sync.state, "partial");
+    assert_eq!(first.totals.unwrap().requests, 42);
+    changing.store(0, Ordering::SeqCst);
+    *rt.last_recent.lock().unwrap() = 0;
+    e.refresh_account("split-status", false).await.unwrap();
+    let recovered = e.bootstrap().await.snapshot.unwrap();
+    assert_eq!(recovered.sync.state, "synced");
+    assert!(recovered.sync.recent.complete);
+    assert_eq!(summary_calls.load(Ordering::SeqCst), 1);
+    task.abort();
+    cleanup(&e);
+}
+
+#[tokio::test]
+async fn balance_failure_keeps_usage_complete_and_last_balance_timestamp() {
+    let failing = Arc::new(AtomicUsize::new(0));
+    let observed = failing.clone();
+    let (site, task) = server(move |request| {
+        if request.starts_with("GET /api/v1/user/profile") {
+            if observed.load(Ordering::SeqCst) > 0 {
+                return (500, json!({"code":500}), vec![]);
+            }
+            return ok(json!({"balance":"10.25"}));
+        }
+        if request.starts_with("GET /api/v1/usage/stats") {
+            return ok(json!({"total_requests":0,"total_actual_cost":0,
+                "total_input_tokens":0,"total_output_tokens":0,
+                "total_cache_read_tokens":0,"total_cache_creation_tokens":0}));
+        }
+        ok(json!({"items":[],"total":0}))
+    })
+    .await;
+    let e = engine();
+    seed(&e, account(site, "balance-status"), session(false));
+    e.refresh_account("balance-status", true).await.unwrap();
+    let first = e.bootstrap().await.snapshot.unwrap();
+    failing.store(1, Ordering::SeqCst);
+    e.refresh_account("balance-status", true).await.unwrap();
+    let result = e.bootstrap().await.snapshot.unwrap();
+    assert_eq!(result.sync.usage.state, "synced");
+    assert!(result.sync.complete);
+    assert_eq!(result.sync.balance.state, "stale");
+    assert_eq!(result.sync.balance.synced_at, first.sync.balance.synced_at);
+    assert_eq!(result.balance, first.balance);
+    assert_eq!(result.sync.recent.state, "synced");
+    assert_eq!(result.sync.state, "partial");
+    task.abort();
+    cleanup(&e);
+}
+
+#[test]
+fn legacy_sync_status_does_not_invent_per_source_completeness() {
+    let status: SyncStatus = serde_json::from_value(json!({
+        "state":"incomplete", "message":"older incomplete snapshot",
+        "usageSyncedAt":"2026-10-01T00:00:00Z", "balanceSyncedAt":null,
+        "recentSyncedAt":"2026-10-01T00:00:00Z", "complete":false
+    }))
+    .unwrap();
+    assert!(!status.usage.complete && !status.recent.complete && !status.balance.complete);
+    assert_eq!(status.usage.state, "loading");
+    assert_eq!(status.state, "incomplete");
+}
+
+#[tokio::test]
+async fn filter_options_only_exports_names_and_ids_and_caches_per_account() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let (site, task) = server(move |request| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        assert!(!request.contains("/admin/"));
+        if request.starts_with("GET /api/v1/keys?") {
+            return ok(
+                json!({"items":[{"id":1,"name":"Work","key":"fixture-private-key",
+                "user_id":7,"group":{"api_key":"fixture-other-secret"}}],"total":1}),
+            );
+        }
+        assert!(request.starts_with("GET /api/v1/usage/dashboard/models?"));
+        let params = request_params(&request);
+        assert!(params.contains_key("start_date") && params.contains_key("end_date"));
+        ok(json!({"models":[{"model":"model-b"},{"model":"model-a"},{"model":"model-a"}]}))
+    })
+    .await;
+    let e = engine();
+    seed(&e, account(site, "options"), session(false));
+    let query = FilterOptionsQuery {
+        account_id: "options".into(),
+        range: UsageRange::Recent,
+        force: false,
+    };
+    let options = e.filter_options(query.clone()).await.unwrap();
+    assert_eq!(options.models, vec!["model-a", "model-b"]);
+    assert!(options.models_complete && options.keys_complete);
+    assert_eq!(options.keys[0].id, 1);
+    let value = serde_json::to_string(&options).unwrap();
+    assert!(
+        !value.contains("fixture-private")
+            && !value.contains("fixture-other")
+            && !value.contains("user_id")
+    );
+    e.filter_options(query).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    e.state.lock().unwrap().config.accounts[0]
+        .summary
+        .needs_login = true;
+    assert!(e
+        .filter_options(FilterOptionsQuery {
+            account_id: "options".into(),
+            range: UsageRange::Recent,
+            force: false,
+        })
+        .await
+        .is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    task.abort();
+    cleanup(&e);
+}
+
+#[tokio::test]
+async fn duplicate_key_options_are_not_reported_as_complete() {
+    let (site, task) = server(|request| {
+        if request.starts_with("GET /api/v1/keys?") {
+            return ok(json!({"items":[{"id":1,"name":"a"},{"id":1,"name":"a"}],"total":2}));
+        }
+        ok(json!({"models":[]}))
+    })
+    .await;
+    let e = engine();
+    seed(&e, account(site, "duplicate-options"), session(false));
+    let result = e
+        .filter_options(FilterOptionsQuery {
+            account_id: "duplicate-options".into(),
+            range: UsageRange::Today,
+            force: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(result.keys.len(), 1);
+    assert!(!result.keys_complete);
+    assert!(result.message.unwrap().contains("尚未完整"));
+    task.abort();
+    cleanup(&e);
+}
+
+#[tokio::test]
+async fn selected_recent_range_is_incomplete_until_its_records_are_covered() {
+    let changing = Arc::new(AtomicUsize::new(1));
+    let observed = changing.clone();
+    let now = Utc::now() - Duration::seconds(1);
+    let (site, task) = server(move |request| {
+        if request.starts_with("GET /api/v1/user/profile") {
+            return ok(json!({"balance":10}));
+        }
+        assert!(!request.contains("/usage/stats"));
+        let id = observed.fetch_add(1, Ordering::SeqCst) as i64;
+        ok(json!({"items":[row(id, now)],"total":1}))
+    })
+    .await;
+    let e = engine();
+    let rt = seed(&e, account(site, "recent-range"), session(false));
+    *rt.range.lock().unwrap() = UsageRange::Recent;
+    e.refresh_account("recent-range", true).await.unwrap();
+    let result = e.bootstrap().await.snapshot.unwrap();
+    assert_eq!(result.sync.state, "incomplete");
+    assert_eq!(result.sync.usage.state, "incomplete");
+    assert_eq!(result.sync.recent.state, "incomplete");
+    assert!(!result.sync.complete);
+    assert!(result.sync.balance.complete && result.sync.latest.complete);
+    task.abort();
+    cleanup(&e);
+}
+
+#[tokio::test]
+async fn records_analysis_exposes_bucket_instants_and_key_identifiers() {
+    let now = Utc::now() - Duration::seconds(1);
+    let (site, task) = server(move |request| {
+        assert!(request.starts_with("GET /api/v1/usage?"));
+        ok(json!({"items":[row(1, now)],"total":1}))
+    })
+    .await;
+    let e = engine();
+    seed(&e, account(site, "record-buckets"), session(false));
+    let result = e
+        .analysis(AnalysisQuery {
+            account_id: "record-buckets".into(),
+            range: UsageRange::Recent,
+            api_key_id: None,
+            model: None,
+            include_keys: true,
+            force: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(result.trend_meta.source, "records");
+    assert_eq!(result.trend_meta.timezone.as_deref(), Some("Asia/Shanghai"));
+    assert_eq!(result.trend_meta.missing_buckets, "zero");
+    assert!(result.trend_meta.complete);
+    let bucket =
+        DateTime::parse_from_rfc3339(result.trend[0].bucket_start.as_ref().unwrap()).unwrap();
+    assert!(bucket <= now && now - bucket.with_timezone(&Utc) < Duration::minutes(1));
+    assert!(result.keys[0].key_id.is_some());
+    assert!(result.models[0].key_id.is_none());
+    task.abort();
+    cleanup(&e);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

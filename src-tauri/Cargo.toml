@@ -1,6 +1,6 @@
 [package]
 name = "subgauge"
-version = "0.1.9"
+version = "0.1.10"
 description = "Sub2API personal usage desktop gauge"
 license = "MIT"
 edition = "2021"

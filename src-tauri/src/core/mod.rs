@@ -49,6 +49,7 @@ struct Runtime {
     retry_at: Mutex<i64>,
     failures: Mutex<u32>,
     analysis: AsyncMutex<Option<(String, i64, AnalysisResult)>>,
+    filter_options: AsyncMutex<Option<(String, i64, FilterOptions)>>,
     records: AsyncMutex<Option<RecordCursor>>,
 }
 #[derive(Clone)]
@@ -81,6 +82,7 @@ impl Runtime {
             retry_at: Mutex::new(0),
             failures: Mutex::new(0),
             analysis: AsyncMutex::new(None),
+            filter_options: AsyncMutex::new(None),
             records: AsyncMutex::new(None),
         }
     }
@@ -218,13 +220,20 @@ impl Engine {
                 .and_then(|bytes| serde_json::from_slice::<Session>(&bytes).ok());
             saved.summary.needs_login = session.is_none();
             if let Some(snapshot) = &mut saved.snapshot {
-                snapshot.sync.state = if session.is_none() {
+                // Older snapshots have no per-source coverage information. Keep them
+                // conservative until each source has independently been refreshed.
+                snapshot.sync.usage.synced_at = snapshot.sync.usage_synced_at.clone();
+                snapshot.sync.balance.synced_at = snapshot.sync.balance_synced_at.clone();
+                snapshot.sync.recent.synced_at = snapshot.sync.recent_synced_at.clone();
+                let state = if session.is_none() {
                     "needsLogin"
                 } else {
                     "stale"
-                }
-                .into();
-                snapshot.sync.message = Some("显示上次结果，等待重新同步。".into());
+                };
+                snapshot
+                    .sync
+                    .unavailable(state, "显示上次结果，等待重新同步。");
+                snapshot.sync.update_overall();
             }
             runtime.insert(
                 saved.summary.id.clone(),
@@ -596,8 +605,7 @@ impl Engine {
                     a.encrypted_session = None;
                     a.summary.needs_login = true;
                     if let Some(v) = &mut a.snapshot {
-                        v.sync.state = "needsLogin".into();
-                        v.sync.message = Some("账号已退出，请重新登录。".into());
+                        v.sync.unavailable("needsLogin", "账号已退出，请重新登录。");
                     }
                 }
             }
@@ -660,8 +668,7 @@ impl Engine {
                         .find(|v| v.summary.id == a.id)
                         .and_then(|saved| saved.snapshot.as_mut())
                         .map(|snapshot| {
-                            snapshot.sync.state = "stale".into();
-                            snapshot.sync.message = Some(error.message.clone());
+                            snapshot.sync.unavailable("stale", &error.message);
                         })
                         .is_some()
                 } else {
@@ -717,8 +724,9 @@ impl Engine {
                         saved.summary.needs_login = true;
                         saved.encrypted_session = None;
                         if let Some(snapshot) = &mut saved.snapshot {
-                            snapshot.sync.state = "needsLogin".into();
-                            snapshot.sync.message = Some("登录已过期，请重新登录该账号。".into());
+                            snapshot
+                                .sync
+                                .unavailable("needsLogin", "登录已过期，请重新登录该账号。");
                         }
                     }
                 }
@@ -1209,11 +1217,18 @@ impl Engine {
             )
         };
         let range = *rt.range.lock().unwrap();
-        let retry_partial = old
-            .as_ref()
-            .is_some_and(|v| matches!(v.sync.state.as_str(), "stale" | "partial" | "needsLogin"));
+        let retry_recent = old.as_ref().is_some_and(|v| {
+            [&v.sync.recent, &v.sync.latest]
+                .iter()
+                .any(|part| matches!(part.state.as_str(), "stale" | "needsLogin"))
+        });
+        let retry_summary = old.as_ref().is_some_and(|v| {
+            [&v.sync.usage, &v.sync.balance]
+                .iter()
+                .any(|part| matches!(part.state.as_str(), "stale" | "needsLogin"))
+        });
         let recent_due = force
-            || retry_partial
+            || retry_recent
             || now_ts - *rt.last_recent.lock().unwrap()
                 >= if is_current {
                     settings.recent_refresh_seconds
@@ -1221,7 +1236,7 @@ impl Engine {
                     settings.background_refresh_seconds
                 } as i64;
         let summary_due = force
-            || retry_partial
+            || retry_summary
             || now_ts - *rt.last_summary.lock().unwrap()
                 >= if is_current {
                     settings.summary_refresh_seconds
@@ -1263,15 +1278,16 @@ impl Engine {
             });
         snapshot.generation = generation;
         let mut errors: Vec<ApiError> = vec![];
-        let mut recent_complete = true;
-        let mut summary_success = false;
+        let incomplete_message = "记录分页变化或达到读取上限，等待补齐。";
         if recent_due {
             let recent_start = now - Duration::minutes(i64::from(a.preferences.recent_minutes));
             match self.collect(&a, &rt, recent_start, now, None, None).await {
                 Ok((rows, complete)) => {
                     snapshot.recent = Some(stats::aggregate(&rows, recent_start, now));
-                    snapshot.sync.recent_synced_at = Some(Utc::now().to_rfc3339());
-                    recent_complete = complete;
+                    snapshot.sync.recent = DataSyncStatus::received(
+                        complete,
+                        (!complete).then(|| incomplete_message.into()),
+                    );
                     if let Some(first) = rows.first() {
                         snapshot.latest = Some(first.clone());
                     }
@@ -1279,32 +1295,65 @@ impl Engine {
                         snapshot.totals = snapshot.recent.clone();
                         snapshot.start = recent_start.to_rfc3339();
                         snapshot.end = now.to_rfc3339();
-                        snapshot.sync.usage_synced_at = snapshot.sync.recent_synced_at.clone();
-                        snapshot.sync.complete = complete;
-                        summary_success = true;
+                        snapshot.sync.usage = snapshot.sync.recent.clone();
                     }
                 }
-                Err(e) => errors.push(e),
+                Err(e) => {
+                    snapshot.sync.recent.unavailable(
+                        if e.unauthorized {
+                            "needsLogin"
+                        } else {
+                            "stale"
+                        },
+                        &e.message,
+                    );
+                    if range == UsageRange::Recent {
+                        snapshot.sync.usage = snapshot.sync.recent.clone();
+                    }
+                    errors.push(e);
+                }
             }
             // Latest request remains visible even when there were no requests in the recent window.
             match self.page(&a, &rt, vec![], 1, 1).await {
                 Ok((rows, _)) => {
                     snapshot.latest = rows.into_iter().next();
+                    snapshot.sync.latest = DataSyncStatus::received(true, None);
                 }
-                Err(e) => errors.push(e),
+                Err(e) => {
+                    snapshot.sync.latest.unavailable(
+                        if e.unauthorized {
+                            "needsLogin"
+                        } else {
+                            "stale"
+                        },
+                        &e.message,
+                    );
+                    errors.push(e);
+                }
             }
             *rt.last_recent.lock().unwrap() = now_ts;
         }
         if summary_due {
-            match self.get(&a, &rt, "/user/profile", &[]).await {
-                Ok(profile) => match stats::decimal(&profile["balance"]) {
-                    Ok(balance) => {
-                        snapshot.balance = Some(balance.normalize().to_string());
-                        snapshot.sync.balance_synced_at = Some(Utc::now().to_rfc3339());
-                    }
-                    Err(e) => errors.push(e.into()),
-                },
-                Err(e) => errors.push(e),
+            let balance = self
+                .get(&a, &rt, "/user/profile", &[])
+                .await
+                .and_then(|profile| stats::decimal(&profile["balance"]).map_err(ApiError::from));
+            match balance {
+                Ok(balance) => {
+                    snapshot.balance = Some(balance.normalize().to_string());
+                    snapshot.sync.balance = DataSyncStatus::received(true, None);
+                }
+                Err(e) => {
+                    snapshot.sync.balance.unavailable(
+                        if e.unauthorized {
+                            "needsLogin"
+                        } else {
+                            "stale"
+                        },
+                        &e.message,
+                    );
+                    errors.push(e);
+                }
             }
             if range != UsageRange::Recent || !recent_due {
                 match self.summary(&a, &rt, range, start, end).await {
@@ -1312,25 +1361,28 @@ impl Engine {
                         snapshot.totals = Some(totals);
                         snapshot.start = start.to_rfc3339();
                         snapshot.end = end.to_rfc3339();
-                        snapshot.sync.usage_synced_at = Some(Utc::now().to_rfc3339());
-                        snapshot.sync.complete = complete;
-                        summary_success = true;
+                        snapshot.sync.usage = DataSyncStatus::received(
+                            complete,
+                            (!complete).then(|| incomplete_message.into()),
+                        );
                     }
-                    Err(e) => errors.push(e),
+                    Err(e) => {
+                        snapshot.sync.usage.unavailable(
+                            if e.unauthorized {
+                                "needsLogin"
+                            } else {
+                                "stale"
+                            },
+                            &e.message,
+                        );
+                        errors.push(e);
+                    }
                 }
             }
             *rt.last_summary.lock().unwrap() = now_ts;
         }
-        snapshot.sync.complete = snapshot.sync.complete && recent_complete;
+        snapshot.sync.update_overall();
         if errors.is_empty() {
-            snapshot.sync.state = if snapshot.sync.complete {
-                "synced"
-            } else {
-                "incomplete"
-            }
-            .into();
-            snapshot.sync.message = (!snapshot.sync.complete)
-                .then(|| "记录分页变化或达到读取上限，当前统计尚不完整。".into());
             *rt.failures.lock().unwrap() = 0;
             let mut retry_at = rt.retry_at.lock().unwrap();
             // A concurrent detail read may have established a newer cooldown.
@@ -1338,16 +1390,11 @@ impl Engine {
                 *retry_at = 0;
             }
         } else {
-            let expired = errors.iter().any(|e| e.unauthorized);
-            snapshot.sync.state = if expired {
-                "needsLogin"
-            } else if summary_success {
-                "partial"
-            } else {
-                "stale"
+            // Keep the originating rate-limit explanation; subsequent requests in
+            // this cycle only report that the account is already cooling down.
+            if let Some(error) = errors.iter().find(|e| e.retry_after.is_some()) {
+                snapshot.sync.message = Some(error.message.clone());
             }
-            .into();
-            snapshot.sync.message = Some(errors[0].message.clone());
             let failure = {
                 let mut f = rt.failures.lock().unwrap();
                 *f = (*f + 1).min(6);
@@ -1369,13 +1416,15 @@ impl Engine {
                 if let Some(saved) = s.config.accounts.iter_mut().find(|v| v.summary.id == id) {
                     if saved.summary.preferences == a.preferences {
                         if saved.summary.needs_login {
-                            snapshot.sync.state = "needsLogin".into();
-                            snapshot.sync.message = Some("登录已过期，请重新登录该账号。".into());
+                            snapshot
+                                .sync
+                                .unavailable("needsLogin", "登录已过期，请重新登录该账号。");
                         } else if *rt.retry_at.lock().unwrap() > Utc::now().timestamp()
                             && errors.is_empty()
                         {
-                            snapshot.sync.state = "stale".into();
-                            snapshot.sync.message = Some("账号请求已暂缓，稍后自动重试。".into());
+                            snapshot
+                                .sync
+                                .unavailable("stale", "账号请求已暂缓，稍后自动重试。");
                         }
                         saved.snapshot = Some(snapshot);
                     } else {
@@ -1491,6 +1540,186 @@ impl Engine {
             message,
         })
     }
+    pub async fn filter_options(&self, query: FilterOptionsQuery) -> Result<FilterOptions, String> {
+        let (a, rt) = self.context(&query.account_id)?;
+        if a.needs_login && !a.demo {
+            return Err("请重新登录该账号后读取筛选选项。".into());
+        }
+        let now = Utc::now();
+        let tz = stats::timezone(&a.preferences.timezone)?;
+        let (start, end) = stats::bounds(query.range, a.preferences.recent_minutes, tz, now)?;
+        // The personal models endpoint accepts dates, not precise timestamps.
+        // Expose the actual candidate coverage rather than claiming a rolling window.
+        let start = stats::midnight(start.with_timezone(&tz).date_naive(), tz)?;
+        let end = stats::midnight(
+            end.with_timezone(&tz)
+                .date_naive()
+                .succ_opt()
+                .ok_or("日期无效")?,
+            tz,
+        )?;
+        let cache_key = format!("{:?}|{start}|{end}|{}", query.range, a.preferences.timezone);
+        let mut cache = rt.filter_options.lock().await;
+        if let Some((key, at, result)) = &*cache {
+            if !query.force && key == &cache_key && now.timestamp() - at < 300 {
+                let state = self.state.lock().unwrap();
+                if !state
+                    .runtime
+                    .get(&a.id)
+                    .is_some_and(|live| Arc::ptr_eq(live, &rt))
+                    || !state.config.accounts.iter().any(|saved| {
+                        saved.summary.id == a.id
+                            && !saved.summary.needs_login
+                            && saved.summary.preferences == a.preferences
+                    })
+                {
+                    return Err("账号状态已变化，请重新读取筛选选项。".into());
+                }
+                let mut result = result.clone();
+                result.generation = state.generation;
+                return Ok(result);
+            }
+        }
+        let mut result = FilterOptions {
+            account_id: a.id.clone(),
+            generation: self.state.lock().unwrap().generation,
+            range: query.range,
+            start: start.to_rfc3339(),
+            end: end.to_rfc3339(),
+            timezone: a.preferences.timezone.clone(),
+            models: vec![],
+            keys: vec![],
+            models_complete: false,
+            keys_complete: false,
+            message: None,
+            synced_at: now.to_rfc3339(),
+        };
+        if a.demo {
+            let rows = self.demo_records(&a, now);
+            result.models = rows
+                .iter()
+                .filter(|r| stats::within(r, start, end))
+                .map(|r| r.model.clone())
+                .collect();
+            result.keys = rows
+                .into_iter()
+                .map(|r| (r.api_key_id, r.api_key_name))
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
+                .map(|(id, name)| KeyOption { id, name })
+                .collect();
+            result.models_complete = true;
+            result.keys_complete = true;
+        } else {
+            let params =
+                Self::dates(&a, start, end - Duration::nanoseconds(1)).map_err(|e| e.message)?;
+            let mut notices = Vec::new();
+            match self.get(&a, &rt, "/usage/dashboard/models", &params).await {
+                Ok(data) => {
+                    if let Some(models) = data["models"].as_array() {
+                        result.models_complete = models.iter().all(|row| row["model"].is_string());
+                        result.models = models
+                            .iter()
+                            .filter_map(|row| row["model"].as_str())
+                            .filter(|model| !model.trim().is_empty())
+                            .map(str::to_owned)
+                            .collect();
+                    }
+                    if !result.models_complete {
+                        notices.push("站点未提供完整模型选项。".into());
+                    }
+                }
+                Err(e) if e.unauthorized || e.retry_after.is_some() => return Err(e.message),
+                Err(e) => notices.push(format!("模型选项：{}", e.message)),
+            }
+            let mut keys = BTreeMap::new();
+            let mut expected_total = None;
+            for page in 1..=10 {
+                let params = vec![
+                    ("page".into(), page.to_string()),
+                    ("page_size".into(), "100".into()),
+                    ("sort_by".into(), "id".into()),
+                    ("sort_order".into(), "asc".into()),
+                ];
+                let data = match self.get(&a, &rt, "/keys", &params).await {
+                    Ok(data) => data,
+                    Err(e) if e.unauthorized || e.retry_after.is_some() => return Err(e.message),
+                    Err(e) => {
+                        notices.push(format!("Key 选项：{}", e.message));
+                        break;
+                    }
+                };
+                let (Some(items), Some(total)) = (data["items"].as_array(), data["total"].as_u64())
+                else {
+                    notices.push("站点 Key 选项格式不兼容。".into());
+                    break;
+                };
+                if data["page"].as_u64() != Some(page as u64)
+                    || data["page_size"].as_u64() != Some(100)
+                {
+                    notices.push("站点 Key 分页参数与请求不一致。".into());
+                    break;
+                }
+                if expected_total.is_some_and(|expected| expected != total) {
+                    break;
+                }
+                expected_total = Some(total);
+                let mut valid = items.len() <= 100;
+                for item in items {
+                    // Deliberately whitelist only public identifiers. Never retain the
+                    // key value, its prefix, or arbitrary fields from the API response.
+                    if let (Some(id), Some(name)) = (item["id"].as_i64(), item["name"].as_str()) {
+                        valid &= id > 0 && keys.insert(id, name.to_owned()).is_none();
+                    } else {
+                        valid = false;
+                    }
+                }
+                if !valid {
+                    break;
+                }
+                if keys.len() as u64 == total {
+                    result.keys_complete = true;
+                    break;
+                }
+                if items.len() < 100 || keys.len() as u64 > total {
+                    break;
+                }
+            }
+            result.keys = keys
+                .into_iter()
+                .map(|(id, name)| KeyOption { id, name })
+                .collect();
+            if !result.keys_complete && !notices.iter().any(|v| v.contains("Key")) {
+                notices.push("Key 选项尚未完整读取，请刷新后重试。".into());
+            }
+            result.message = (!notices.is_empty()).then(|| notices.join(" "));
+        }
+        result.models.sort();
+        result.models.dedup();
+        result
+            .keys
+            .sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+        {
+            let state = self.state.lock().unwrap();
+            if !state
+                .runtime
+                .get(&a.id)
+                .is_some_and(|live| Arc::ptr_eq(live, &rt))
+                || !state.config.accounts.iter().any(|saved| {
+                    saved.summary.id == a.id
+                        && saved.summary.preferences == a.preferences
+                        && !saved.summary.needs_login
+                })
+            {
+                return Err("账号状态已变化，请重新读取筛选选项。".into());
+            }
+            result.generation = state.generation;
+        }
+        if result.models_complete && result.keys_complete {
+            *cache = Some((cache_key, now.timestamp(), result.clone()));
+        }
+        Ok(result)
+    }
     pub async fn analysis(&self, query: AnalysisQuery) -> Result<AnalysisResult, String> {
         let (a, rt) = self.context(&query.account_id)?;
         let now = Utc::now();
@@ -1551,13 +1780,15 @@ impl Engine {
                             Ok(AnalysisRow {
                                 name: v[label].as_str().ok_or("站点图表缺少标签")?.into(),
                                 totals: Totals::from_chart(v)?,
+                                key_id: None,
+                                bucket_start: None,
                             })
                         })
                         .collect()
                 };
             let trend = parse_rows(&trend_data, "trend", "date")?;
             let models = parse_rows(&models_data, "models", "model")?;
-            let mut keys = BTreeMap::<String, Totals>::new();
+            let mut keys = BTreeMap::<(i64, String), Totals>::new();
             let mut complete = true;
             if query.include_keys {
                 let (records, covered) = self
@@ -1573,7 +1804,7 @@ impl Engine {
                     .map_err(|e| e.message)?;
                 complete = covered;
                 for r in records {
-                    keys.entry(format!("{} · #{}", r.api_key_name, r.api_key_id))
+                    keys.entry((r.api_key_id, r.api_key_name))
                         .or_insert_with(Totals::zero)
                         .add(&r.totals);
                 }
@@ -1586,10 +1817,27 @@ impl Engine {
                 end: end.to_rfc3339(),
                 timezone: a.preferences.timezone.clone(),
                 trend,
+                trend_meta: TrendMetadata {
+                    source: "server".into(),
+                    granularity: if query.range == UsageRange::Today {
+                        "hour"
+                    } else {
+                        "day"
+                    }
+                    .into(),
+                    timezone: None,
+                    missing_buckets: "unknown".into(),
+                    complete: true,
+                },
                 models,
                 keys: keys
                     .into_iter()
-                    .map(|(name, totals)| AnalysisRow { name, totals })
+                    .map(|((id, name), totals)| AnalysisRow {
+                        name: format!("{name} · #{id}"),
+                        totals,
+                        key_id: Some(id),
+                        bucket_start: None,
+                    })
                     .collect(),
                 complete,
                 message: Some(
@@ -1634,35 +1882,34 @@ impl Engine {
             .await
             .map_err(|e| e.message)?
         };
-        let mut trend = BTreeMap::<String, Totals>::new();
+        let mut trend = BTreeMap::<DateTime<Utc>, Totals>::new();
         let mut models = BTreeMap::<String, Totals>::new();
-        let mut keys = BTreeMap::<String, Totals>::new();
+        let mut keys = BTreeMap::<(i64, String), Totals>::new();
         for r in records {
             let date = DateTime::parse_from_rfc3339(&r.created_at)
                 .map_err(|_| "时间格式无效")?
                 .with_timezone(&tz);
-            let label = if query.range == UsageRange::Recent {
-                date.format("%Y-%m-%d %H:%M").to_string()
-            } else if query.range == UsageRange::Today {
-                date.format("%Y-%m-%d %H:00").to_string()
-            } else {
-                date.format("%Y-%m-%d").to_string()
-            };
+            let bucket = stats::trend_bucket(date.with_timezone(&Utc), query.range, tz)?;
             trend
-                .entry(label)
+                .entry(bucket)
                 .or_insert_with(Totals::zero)
                 .add(&r.totals);
             models
                 .entry(r.model)
                 .or_insert_with(Totals::zero)
                 .add(&r.totals);
-            keys.entry(format!("{} · #{}", r.api_key_name, r.api_key_id))
+            keys.entry((r.api_key_id, r.api_key_name))
                 .or_insert_with(Totals::zero)
                 .add(&r.totals);
         }
         let rows = |map: BTreeMap<String, Totals>| {
             map.into_iter()
-                .map(|(name, totals)| AnalysisRow { name, totals })
+                .map(|(name, totals)| AnalysisRow {
+                    name,
+                    totals,
+                    key_id: None,
+                    bucket_start: None,
+                })
                 .collect()
         };
         let result = AnalysisResult {
@@ -1672,9 +1919,48 @@ impl Engine {
             start: start.to_rfc3339(),
             end: end.to_rfc3339(),
             timezone: a.preferences.timezone.clone(),
-            trend: rows(trend),
+            trend: trend
+                .into_iter()
+                .map(|(bucket, totals)| AnalysisRow {
+                    name: bucket
+                        .with_timezone(&tz)
+                        .format(if query.range == UsageRange::Recent {
+                            "%Y-%m-%d %H:%M"
+                        } else if query.range == UsageRange::Today {
+                            "%Y-%m-%d %H:00"
+                        } else {
+                            "%Y-%m-%d"
+                        })
+                        .to_string(),
+                    totals,
+                    key_id: None,
+                    bucket_start: Some(bucket.to_rfc3339()),
+                })
+                .collect(),
+            trend_meta: TrendMetadata {
+                source: "records".into(),
+                granularity: if query.range == UsageRange::Recent {
+                    "minute"
+                } else if query.range == UsageRange::Today {
+                    "hour"
+                } else {
+                    "day"
+                }
+                .into(),
+                timezone: Some(a.preferences.timezone.clone()),
+                missing_buckets: if complete { "zero" } else { "unknown" }.into(),
+                complete,
+            },
             models: rows(models),
-            keys: rows(keys),
+            keys: keys
+                .into_iter()
+                .map(|((id, name), totals)| AnalysisRow {
+                    name: format!("{name} · #{id}"),
+                    totals,
+                    key_id: Some(id),
+                    bucket_start: None,
+                })
+                .collect(),
             complete,
             message: (!complete).then(|| {
                 "分析最多读取 5,000 条记录；当前图表仅覆盖已读取记录，不代表完整范围。".into()
@@ -1759,6 +2045,10 @@ impl Engine {
                 balance_synced_at: Some(now.to_rfc3339()),
                 recent_synced_at: Some(now.to_rfc3339()),
                 complete: true,
+                usage: DataSyncStatus::received(true, None),
+                balance: DataSyncStatus::received(true, None),
+                recent: DataSyncStatus::received(true, None),
+                latest: DataSyncStatus::received(true, None),
             },
             demo: true,
         })

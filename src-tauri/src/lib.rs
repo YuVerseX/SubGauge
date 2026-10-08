@@ -170,6 +170,17 @@ async fn query_records(
     result
 }
 #[tauri::command]
+async fn filter_options(
+    app: tauri::AppHandle,
+    engine: State<'_, Engine>,
+    query: FilterOptionsQuery,
+) -> Result<FilterOptions, String> {
+    let _activity = app.state::<updates::Updates>().activity().await?;
+    let result = engine.filter_options(query).await;
+    publish(&app, &engine.bootstrap().await);
+    result
+}
+#[tauri::command]
 async fn analysis(
     app: tauri::AppHandle,
     engine: State<'_, Engine>,
@@ -389,6 +400,7 @@ pub fn run() {
             patch_settings,
             refresh,
             query_records,
+            filter_options,
             analysis,
             remove_account,
             logout,

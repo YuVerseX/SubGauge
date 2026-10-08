@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AccountPreferences, AccountSummary, AppSettings, AppSettingsPatch, Bootstrap, FloatSizeState, LoginInput, LoginResult, QueryInput, ResizeDirection, UsageAnalysis, UsagePage, UsageRange, UsageRecord, UsageSnapshot, UsageTotals } from './types'
+import type { AccountPreferences, AccountSummary, AppSettings, AppSettingsPatch, Bootstrap, FilterOptions, FloatSizeState, LoginInput, LoginResult, QueryInput, ResizeDirection, SyncPart, TrendMeta, UsageAnalysis, UsagePage, UsageRange, UsageRecord, UsageSnapshot, UsageTotals } from './types'
 import { demoApi } from './demo'
 
 export const isNative = '__TAURI_INTERNALS__' in window
@@ -8,12 +8,12 @@ export const isDemo = !isNative && new URLSearchParams(location.search).get('dem
 type NativeTotals = { cost: string; requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
 type NativeAccount = { id: string; site: string; email: string; role: string; preferences: AccountPreferences & { alias: string }; needsLogin: boolean; demo: boolean }
 type NativeRecord = { id: number; createdAt: string; model: string; apiKeyId: number; apiKeyName: string; totals: NativeTotals; durationMs?: number }
-type NativeSnapshot = { accountId: string; generation: number; range: UsageRange; timezone: string; start: string; end: string; totals: NativeTotals | null; recent: NativeTotals | null; latest: NativeRecord | null; balance: string | null; sync: { state: string; message: string | null; usageSyncedAt: string | null; balanceSyncedAt: string | null; recentSyncedAt?: string | null; complete: boolean } }
+type NativeSnapshot = { accountId: string; generation: number; range: UsageRange; timezone: string; start: string; end: string; totals: NativeTotals | null; recent: NativeTotals | null; latest: NativeRecord | null; balance: string | null; sync: { state: string; message: string | null; usageSyncedAt: string | null; balanceSyncedAt: string | null; recentSyncedAt?: string | null; complete: boolean; usage?: SyncPart; balance?: SyncPart; recent?: SyncPart; latest?: SyncPart } }
 type NativeState = { accounts: NativeAccount[]; currentAccountId: string | null; selectedRange: UsageRange; settings: AppSettings; snapshot: NativeSnapshot | null; generation: number }
 const totals = (t: NativeTotals): UsageTotals => ({ ...t, actualCost: Number(t.cost), actualCostExact: t.cost })
 const record = (r: NativeRecord): UsageRecord => ({ ...totals(r.totals), id: String(r.id), createdAt: r.createdAt, model: r.model, keyId: String(r.apiKeyId), keyName: r.apiKeyName, durationMs: r.durationMs })
 const account = (a: NativeAccount): AccountSummary => ({ id: a.id, alias: a.preferences.alias || a.email, siteUrl: a.site, email: a.email, role: a.role, preferences: a.preferences, sessionStatus: a.needsLogin ? 'needsLogin' : 'ready', demo: a.demo })
-function snapshot(s: NativeSnapshot): UsageSnapshot { return { accountId: s.accountId, generation: s.generation, range: s.range, timezone: s.timezone, start: s.start, end: s.end, totals: s.totals && totals(s.totals), recent: s.recent && totals(s.recent), latest: s.latest && record(s.latest), balance: s.balance == null ? null : Number(s.balance), balanceExact: s.balance, status: !s.sync.complete && ['ready', 'synced'].includes(s.sync.state) ? 'incomplete' : s.sync.state, message: s.sync.message, usageUpdatedAt: s.sync.usageSyncedAt, balanceUpdatedAt: s.sync.balanceSyncedAt, recentUpdatedAt: s.sync.recentSyncedAt } }
+function snapshot(s: NativeSnapshot): UsageSnapshot { return { accountId: s.accountId, generation: s.generation, range: s.range, timezone: s.timezone, start: s.start, end: s.end, totals: s.totals && totals(s.totals), recent: s.recent && totals(s.recent), latest: s.latest && record(s.latest), balance: s.balance == null ? null : Number(s.balance), balanceExact: s.balance, status: !s.sync.complete && ['ready', 'synced'].includes(s.sync.state) ? 'incomplete' : s.sync.state, message: s.sync.message, usageUpdatedAt: s.sync.usageSyncedAt, balanceUpdatedAt: s.sync.balanceSyncedAt, recentUpdatedAt: s.sync.recentSyncedAt, sync: s.sync.usage && s.sync.balance && s.sync.recent ? { usage: s.sync.usage, balance: s.sync.balance, recent: s.sync.recent, latest: s.sync.latest } : undefined } }
 function state(s: NativeState): Bootstrap { return { generation: s.generation, accounts: s.accounts.map(account), activeAccountId: s.currentAccountId, settings: { ...s.settings, theme: s.settings.theme || 'light' }, range: s.selectedRange, snapshot: s.snapshot && snapshot(s.snapshot) } }
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> { if (!isNative) throw new Error('请在 SubGauge 桌面应用中连接账号。浏览器仅支持显式示例预览。'); return invoke<T>(command, args) }
 export const api = {
@@ -59,18 +59,21 @@ export const api = {
   },
   async analysis(accountId: string, range: UsageRange, includeKeys = false, force = false): Promise<UsageAnalysis> {
     if (isDemo) return demoApi.analysis(accountId, range)
-    type Row = { name: string; totals: NativeTotals }
+    type Row = { name: string; totals: NativeTotals; keyId?: number; bucketStart?: string }
     const r = await call<{
       accountId: string; generation: number; range: UsageRange; start: string; end: string;
       timezone: string; syncedAt: string; trend: Row[]; models: Row[]; keys: Row[];
-      complete: boolean; message?: string;
+      complete: boolean; message?: string; trendMeta?: TrendMeta;
     }>('analysis', { query: { accountId, range, apiKeyId: null, model: null, includeKeys, force } })
     return {
       ...r,
-      trend: r.trend.map(row => ({ label: row.name, actualCost: Number(row.totals.cost) })),
+      trend: r.trend.map(row => ({ label: row.name, actualCost: Number(row.totals.cost), bucketStart: row.bucketStart })),
       models: r.models.map(row => ({ name: row.name, ...totals(row.totals) })),
-      keys: r.keys.map(row => ({ name: row.name, ...totals(row.totals) })),
+      keys: r.keys.map(row => ({ name: row.name, keyId: row.keyId, ...totals(row.totals) })),
     }
+  },
+  async filterOptions(accountId: string, range: UsageRange, force = false): Promise<FilterOptions> {
+    return isDemo ? demoApi.filterOptions(accountId, range) : call<FilterOptions>('filter_options', { query: { accountId, range, force } })
   },
   async subscribe(callback: (data: Bootstrap) => void): Promise<() => void> { return isNative ? listen<NativeState>('subgauge:state', e => callback(state(e.payload))) : () => {} },
   async subscribeSettingsError(callback: (error: string) => void): Promise<() => void> { return isNative ? listen<string>('subgauge:settings-error', e => callback(e.payload)) : () => {} },
